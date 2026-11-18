@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Solmar — Rio Vega</title>
+<style>
+  html, body { margin: 0; height: 100%; overflow: hidden; background: #0e1420; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #game { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+  #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  #hud { position: fixed; inset: 0; pointer-events: none; color: #f2f5f8; text-shadow: 0 1px 3px rgba(0,0,0,.7); }
+  #hud[hidden] { display: none; }
+  .panel { position: absolute; background: rgba(10, 16, 24, .55); border-radius: 8px; padding: 8px 12px; }
+  #topleft { top: 12px; left: 12px; font-size: 20px; font-weight: 700; line-height: 1.5; }
+  #wanted { color: #ffd94d; letter-spacing: 2px; font-size: 22px; }
+  #minimap { position: absolute; top: 12px; right: 12px; border: 2px solid rgba(255,255,255,.35); border-radius: 8px; background: #10151c; }
+  #speed { bottom: 16px; right: 16px; font-size: 26px; font-weight: 700; }
+  #objective { bottom: 16px; left: 12px; max-width: 46vw; font-size: 16px; }
+  #hint { bottom: 16px; left: 50%; transform: translateX(-50%); font-size: 13px; opacity: .85; white-space: nowrap; }
+  /* Narrow screens: the centred hint would sit on top of the objective line,
+     so the hint moves to its own row above it, left-aligned. */
+  @media (max-width: 1100px) {
+    #objective { max-width: 60vw; font-size: 15px; }
+    #hint { left: 12px; transform: none; bottom: 68px; }
+  }
+  #banner { top: 64px; left: 50%; transform: translateX(-50%); font-size: 20px; font-weight: 700; color: #ffc93c; white-space: nowrap; }
+  .screen { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(8, 12, 20, .72); color: #eef1f5; z-index: 5; }
+  .screen[hidden] { display: none; }
+  .card { max-width: 560px; padding: 28px 36px; background: rgba(16, 22, 34, .92); border: 1px solid rgba(255,255,255,.14); border-radius: 12px; text-align: center; }
+  .card h1 { margin: 0 0 4px; font-size: 52px; letter-spacing: 4px; color: #ffc93c; }
+  .card h2 { margin: 0 0 12px; font-size: 15px; font-weight: 400; color: #9fb4c8; letter-spacing: 1px; }
+  .card p { font-size: 15px; line-height: 1.55; color: #c9d4de; }
+  .card .controls { font-size: 13px; color: #8b93a3; line-height: 1.8; }
+  .card button { pointer-events: auto; margin: 8px 6px 0; padding: 12px 26px; font-size: 17px; font-weight: 700; color: #10151c; background: #ffc93c; border: 0; border-radius: 8px; cursor: pointer; }
+  .card button:disabled { background: #5a5348; color: #9a938a; cursor: default; }
+  .card button.secondary { background: transparent; color: #eef1f5; border: 1px solid rgba(255,255,255,.4); }
+</style>
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js" } }
+</script>
+</head>
+<body>
+<canvas id="game" aria-label="Solmar: an open-world crime game. Rio Vega explores a sun-soaked coastal city on foot and by car."></canvas>
+<p id="status" role="status" aria-live="polite"></p>
+<div id="hud" hidden>
+  <div class="panel" id="topleft"><span id="money">$250</span><br><span id="health">Health 100</span><br><span id="wanted">☆☆☆☆☆</span><br><span id="ammo">Pistol 12 / 24</span></div>
+  <div class="panel" id="banner" style="display:none"></div>
+  <canvas id="minimap" width="180" height="180"></canvas>
+  <div class="panel" id="speed"></div>
+  <div class="panel" id="objective"></div>
+  <div class="panel" id="hint"></div>
+</div>
+<div class="screen" id="screen-title">
+  <div class="card">
+    <h1>SOLMAR</h1>
+    <h2>RIO VEGA &middot; AN OPEN-WORLD CRIME GAME</h2>
+    <p>Rio Vega is back in Solmar, the sun-soaked coastal city that owes him money and
+    answers. His fixer, Ana Deluca, is waiting at the amber marker — get there, get paid,
+    and take the city for yourself. On foot or behind the wheel, every car is yours if
+    you can reach it.</p>
+    <p class="controls">WASD move &middot; Shift run &middot; Mouse look &middot; E enter / exit car<br>
+    WASD drive &middot; Space handbrake &middot; Click / G fire pistol &middot; F punch &middot; R reload<br>
+    M mute &middot; P / Esc pause</p>
+    <button id="btn-new" type="button">New Game</button>
+    <button id="btn-continue" class="secondary" type="button" disabled>Continue</button>
+  </div>
+</div>
+<div class="screen" id="screen-paused" hidden>
+  <div class="card">
+    <h1 style="font-size:36px">PAUSED</h1>
+    <p>Solmar waits for no one. Except right now.</p>
+    <button id="btn-resume" type="button">Resume</button>
+  </div>
+</div>
+<div class="screen" id="screen-over" hidden>
+  <div class="card">
+    <h1 id="over-title" style="font-size:36px">WASTED</h1>
+    <p id="over-text">Rio got clipped by traffic and woke up at the docks. The city is still his — he just has to take it again.</p>
+    <button id="btn-respawn" type="button">Respawn</button>
+  </div>
+</div>
+<script type="module" src="./src/main.js"></script>
+</body>
+</html>
