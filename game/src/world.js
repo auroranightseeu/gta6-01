@@ -1,124 +1,97 @@
-// The game's rules and state, with no drawing and no browser in it: the player's paddle, the
-// pool of falling blocks and coins, spawning, collisions, score, lives and level. step() advances
-// one fixed step and returns what happened as bit flags, so the caller can react without the
-// world knowing about screens or sound. Nothing here allocates after createWorld returns.
-import { BLOCK, COIN, FIELD, LEVEL, LIVES, PLAYER, POOL_SIZE } from './config.js';
+// Solmar's layout, generated from a seed: no drawing and no browser in here, just data.
+// Buildings sit on 2x2 lots inside each 36 m block; roads, lamps, palms and parked-car spots
+// are placed the same way, so one seed always builds the same city. Collision is circle-vs-AABB.
+import { CITY, PALETTE, PARKED_CARS } from './config.js';
 
-export const KIND_BLOCK = 0;
-export const KIND_COIN = 1;
+const LOT = 16; // lot size inside a block; lots sit 2 m apart, 2 m inside the block edge
 
-export const EVENT_HIT = 1;
-export const EVENT_COIN = 2;
-export const EVENT_OVER = 4;
-
-function overlaps(a, b) {
-  return a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y;
-}
-
-export function createWorld(random) {
-  const player = { x: 0, y: FIELD.groundY - PLAYER.height, width: PLAYER.width, height: PLAYER.height, invulnerable: 0 };
-  const items = [];
-  for (let index = 0; index < POOL_SIZE; index += 1) {
-    items.push({ active: false, kind: KIND_BLOCK, x: 0, y: 0, width: 0, height: 0, speed: 0 });
-  }
-  const state = { player, items, score: 0, lives: LIVES, level: 1, elapsed: 0, blockTimer: 0, coinTimer: 0 };
-
-  function reset() {
-    player.x = (FIELD.width - player.width) / 2;
-    player.invulnerable = 0;
-    for (const item of items) item.active = false;
-    state.score = 0;
-    state.lives = LIVES;
-    state.level = 1;
-    state.elapsed = 0;
-    state.blockTimer = BLOCK.interval;
-    state.coinTimer = COIN.interval;
-  }
-
-  function freeItem() {
-    for (let index = 0; index < items.length; index += 1) if (!items[index].active) return items[index];
-    return null;
-  }
-
-  function spawnBlock() {
-    const item = freeItem();
-    if (item === null) return;
-    item.active = true;
-    item.kind = KIND_BLOCK;
-    item.width = BLOCK.minWidth + random() * (BLOCK.maxWidth - BLOCK.minWidth);
-    item.height = BLOCK.height;
-    item.x = random() * (FIELD.width - item.width);
-    item.y = -item.height;
-    item.speed = BLOCK.speed + BLOCK.speedPerLevel * (state.level - 1) + random() * BLOCK.speedJitter;
-  }
-
-  function spawnCoin() {
-    const item = freeItem();
-    if (item === null) return;
-    item.active = true;
-    item.kind = KIND_COIN;
-    item.width = COIN.size;
-    item.height = COIN.size;
-    item.x = random() * (FIELD.width - item.width);
-    item.y = -item.height;
-    item.speed = COIN.speed + COIN.speedPerLevel * (state.level - 1);
-  }
-
-  function blockInterval() {
-    return Math.max(BLOCK.minInterval, BLOCK.interval * BLOCK.intervalScale ** (state.level - 1));
-  }
-
-  /**
-   * One fixed step. `direction` is -1, 0 or 1 (left, still, right). With `harmless` set (the title
-   * screen's backdrop) things fall but nothing touches the player and nothing scores.
-   */
-  function step(dt, direction, harmless) {
-    let events = 0;
-    state.elapsed += dt;
-    state.level = Math.min(LEVEL.max, 1 + Math.floor(state.elapsed / LEVEL.seconds));
-
-    player.x = Math.min(FIELD.width - player.width, Math.max(0, player.x + direction * PLAYER.speed * dt));
-    if (player.invulnerable > 0) player.invulnerable = Math.max(0, player.invulnerable - dt);
-
-    state.blockTimer -= dt;
-    if (state.blockTimer <= 0) {
-      spawnBlock();
-      state.blockTimer += blockInterval();
-    }
-    state.coinTimer -= dt;
-    if (state.coinTimer <= 0) {
-      spawnCoin();
-      state.coinTimer += COIN.interval + random() * COIN.intervalJitter;
-    }
-
-    for (let index = 0; index < items.length; index += 1) {
-      const item = items[index];
-      if (!item.active) continue;
-      item.y += item.speed * dt;
-      if (item.y > FIELD.groundY) {
-        item.active = false;
-        if (item.kind === KIND_BLOCK && !harmless) state.score += BLOCK.dodgePoints;
-        continue;
-      }
-      if (harmless || !overlaps(item, player)) continue;
-      if (item.kind === KIND_COIN) {
-        item.active = false;
-        state.score += COIN.points;
-        events |= EVENT_COIN;
-      } else if (player.invulnerable === 0) {
-        item.active = false;
-        state.lives -= 1;
-        player.invulnerable = PLAYER.invulnerable;
-        events |= EVENT_HIT;
-        if (state.lives === 0) {
-          events |= EVENT_OVER;
-          break;
+export function createCity(random) {
+  const buildings = [];
+  const colliders = [];
+  const lamps = [];
+  const palms = [];
+  for (const bx of CITY.blockCenters) {
+    for (const bz of CITY.blockCenters) {
+      // Taller towers near the centre, lower blocks at the edge.
+      const centre = 1 + (1 - (Math.abs(bx) + Math.abs(bz)) / 200) * 1.6;
+      for (let lx = -1; lx <= 1; lx += 2) {
+        for (let lz = -1; lz <= 1; lz += 2) {
+          if (random() < 0.3) continue; // empty lot: a yard, a car park, breathing room
+          const w = LOT * (0.7 + random() * 0.3);
+          const d = LOT * (0.7 + random() * 0.3);
+          const h = (7 + random() * random() * 30) * centre;
+          const x = bx + lx * (LOT / 2 + 1);
+          const z = bz + lz * (LOT / 2 + 1);
+          const color = PALETTE.facades[Math.floor(random() * PALETTE.facades.length)];
+          buildings.push({ x, z, w, d, h, color });
+          colliders.push({ minX: x - w / 2, maxX: x + w / 2, minZ: z - d / 2, maxZ: z + d / 2 });
         }
       }
+      if (random() < 0.6) palms.push({ x: bx + (random() - 0.5) * 28, z: bz + (random() - 0.5) * 28 });
     }
-    return events;
   }
+  // Lamps on alternating intersection corners.
+  for (const lx of CITY.roadLines) {
+    for (const lz of CITY.roadLines) {
+      if ((lx + lz) % 100 === 0) lamps.push({ x: lx + 8.5, z: lz + 8.5 });
+    }
+  }
+  // Parked cars along road edges, parallel to the road, clear of intersections.
+  const parkedSpots = [];
+  for (let i = 0; i < PARKED_CARS; i += 1) {
+    const line = CITY.roadLines[Math.floor(random() * CITY.roadLines.length)];
+    const along = (random() * 2 - 1) * 110;
+    const side = random() < 0.5 ? -1 : 1;
+    const vertical = random() < 0.5;
+    const x = vertical ? line + side * 5.4 : along;
+    const z = vertical ? along : line + side * 5.4;
+    // Intersections sit where the along-coordinate is 25 (mod 50); keep clear of them.
+    const m = ((along % 50) + 50) % 50;
+    if (Math.abs(m - 25) < 11) { i -= 1; continue; }
+    parkedSpots.push({
+      x, z, heading: vertical ? (side > 0 ? Math.PI : 0) : (side > 0 ? -Math.PI / 2 : Math.PI / 2),
+      color: PALETTE.carColors[Math.floor(random() * PALETTE.carColors.length)],
+    });
+  }
+  return { buildings, colliders, lamps, palms, parkedSpots, bound: CITY.bound };
+}
 
-  reset();
-  return { state, reset, step };
+/** Push a circle out of every building AABB and the city edge; true when it hit something. */
+export function resolveCircle(p, r, city) {
+  let hit = false;
+  for (const c of city.colliders) {
+    const cx = Math.max(c.minX, Math.min(p.x, c.maxX));
+    const cz = Math.max(c.minZ, Math.min(p.z, c.maxZ));
+    const dx = p.x - cx;
+    const dz = p.z - cz;
+    const d2 = dx * dx + dz * dz;
+    if (d2 >= r * r) continue;
+    hit = true;
+    if (d2 > 1e-6) {
+      const d = Math.sqrt(d2);
+      p.x = cx + (dx / d) * r;
+      p.z = cz + (dz / d) * r;
+    } else {
+      // Centre inside the box: shove out along the shallowest side.
+      const pushL = p.x - c.minX + r, pushR = c.maxX - p.x + r;
+      const pushT = p.z - c.minZ + r, pushB = c.maxZ - p.z + r;
+      const m = Math.min(pushL, pushR, pushT, pushB);
+      if (m === pushL) p.x = c.minX - r;
+      else if (m === pushR) p.x = c.maxX + r;
+      else if (m === pushT) p.z = c.minZ - r;
+      else p.z = c.maxZ + r;
+    }
+  }
+  const b = city.bound - r;
+  if (p.x < -b) { p.x = -b; hit = true; }
+  if (p.x > b) { p.x = b; hit = true; }
+  if (p.z < -b) { p.z = -b; hit = true; }
+  if (p.z > b) { p.z = b; hit = true; }
+  return hit;
+}
+
+export function dist2(ax, az, bx, bz) {
+  const dx = ax - bx;
+  const dz = az - bz;
+  return dx * dx + dz * dz;
 }

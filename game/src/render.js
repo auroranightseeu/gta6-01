@@ -1,141 +1,259 @@
-// Drawing only: the world's state and the current screen in, pixels out. The 1280x720 playfield
-// is scaled to fit the window and centred, the margin filled with the backdrop colour. Flat
-// rectangles and circles, canvas text for the HUD and the panels. Text that holds a number is
-// rebuilt only when the number changes, so a frame allocates nothing.
-import { FIELD, FONT, LIVES, PALETTE } from './config.js';
-import { KIND_COIN } from './world.js';
+// Drawing only, in three.js: the sun-soaked sky, the ground texture (asphalt, sidewalks,
+// lane dashes drawn once on a canvas), the buildings with lit-window facades, lamps and
+// palms, plus the little built-from-boxes people and cars. No rules live here.
+import * as THREE from 'three';
+import { CITY, PALETTE } from './config.js';
 
 export const SCREEN_TITLE = 'title';
 export const SCREEN_PLAY = 'play';
 export const SCREEN_PAUSED = 'paused';
 export const SCREEN_OVER = 'over';
 
-/** The panel's width; its height grows with its lines: room for the title, the lines and the prompt. */
-const PANEL = { width: 600, top: 134, line: 34, bottom: 70 };
-const LIFE_SIZE = 20;
-const LIFE_GAP = 8;
+const GROUND_PX = 1024;
+const WORLD = CITY.bound * 2 + 16; // ground plane spans a little past the city edge
 
-function cachedLabel(prefix) {
-  let value = -1;
-  let text = '';
-  return function label(next) {
-    if (next !== value) {
-      value = next;
-      text = prefix + next;
+function facadeTexture(colorHex, lit) {
+  const c = document.createElement('canvas');
+  c.width = 128;
+  c.height = 256;
+  const g = c.getContext('2d');
+  g.fillStyle = `#${colorHex.toString(16).padStart(6, '0')}`;
+  g.fillRect(0, 0, 128, 256);
+  for (let row = 0; row < 12; row += 1) {
+    for (let col = 0; col < 6; col += 1) {
+      const x = 8 + col * 20;
+      const y = 10 + row * 20;
+      g.fillStyle = lit ? PALETTE.windowLit : PALETTE.windowDark;
+      g.fillRect(x, y, 12, 14);
     }
-    return text;
-  };
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
 }
 
-export function createRenderer(canvas) {
-  const context = canvas.getContext('2d');
-  const view = { scale: 1, x: 0, y: 0 };
-  const scoreLabel = cachedLabel('Score ');
-  const levelLabel = cachedLabel('Level ');
-  const finalLabel = cachedLabel('Score ');
-  const bestLabel = cachedLabel('Best ');
+function groundTexture() {
+  const c = document.createElement('canvas');
+  c.width = GROUND_PX;
+  c.height = GROUND_PX;
+  const g = c.getContext('2d');
+  const s = GROUND_PX / WORLD; // px per metre
+  const toPx = (v) => (v + WORLD / 2) * s;
+  g.fillStyle = '#3c4148';
+  g.fillRect(0, 0, GROUND_PX, GROUND_PX);
+  // Sidewalk slabs, one per block.
+  g.fillStyle = '#9a938a';
+  for (const bx of CITY.blockCenters) {
+    for (const bz of CITY.blockCenters) {
+      g.fillRect(toPx(bx - 18), toPx(bz - 18), 36 * s, 36 * s);
+    }
+  }
+  // Pale kerb edge around each block.
+  g.strokeStyle = '#7d766d';
+  g.lineWidth = 2;
+  for (const bx of CITY.blockCenters) {
+    for (const bz of CITY.blockCenters) {
+      g.strokeRect(toPx(bx - 18), toPx(bz - 18), 36 * s, 36 * s);
+    }
+  }
+  // Dashed centre lines down every road.
+  g.fillStyle = '#e8e4d8';
+  for (const line of CITY.roadLines) {
+    for (let d = -130; d < 130; d += 8) {
+      g.fillRect(toPx(line) - 1, toPx(d), 2, 4 * s);
+      g.fillRect(toPx(d), toPx(line) - 1, 4 * s, 2);
+    }
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+function makePersonMesh(color) {
+  const group = new THREE.Group();
+  const mat = new THREE.MeshLambertMaterial({ color });
+  const skin = new THREE.MeshLambertMaterial({ color: 0xd9a066 });
+  const dark = new THREE.MeshLambertMaterial({ color: 0x2c2c34 });
+  const legGeo = new THREE.BoxGeometry(0.22, 0.8, 0.22);
+  legGeo.translate(0, -0.4, 0);
+  const legL = new THREE.Mesh(legGeo, dark);
+  legL.position.set(-0.14, 0.8, 0);
+  const legR = new THREE.Mesh(legGeo, dark);
+  legR.position.set(0.14, 0.8, 0);
+  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.62, 0.3), mat);
+  torso.position.y = 1.12;
+  const armGeo = new THREE.BoxGeometry(0.16, 0.62, 0.16);
+  armGeo.translate(0, -0.31, 0);
+  const armL = new THREE.Mesh(armGeo, mat);
+  armL.position.set(-0.37, 1.38, 0);
+  const armR = new THREE.Mesh(armGeo, mat);
+  armR.position.set(0.37, 1.38, 0);
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.32, 0.32), skin);
+  head.position.y = 1.62;
+  group.add(legL, legR, torso, armL, armR, head);
+  group.userData = { legL, legR, armL, armR };
+  return group;
+}
+
+function makeCarMesh(color) {
+  const group = new THREE.Group();
+  const paint = new THREE.MeshLambertMaterial({ color });
+  const glass = new THREE.MeshLambertMaterial({ color: 0x1c2733 });
+  const tyre = new THREE.MeshLambertMaterial({ color: 0x16181c });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.55, 4.2), paint);
+  body.position.y = 0.55;
+  const cabin = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.5, 2.1), glass);
+  cabin.position.set(0, 1.05, -0.25);
+  const roof = new THREE.Mesh(new THREE.BoxGeometry(1.55, 0.08, 1.9), paint);
+  roof.position.set(0, 1.32, -0.25);
+  group.add(body, cabin, roof);
+  const wheelGeo = new THREE.CylinderGeometry(0.36, 0.36, 0.28, 12);
+  wheelGeo.rotateZ(Math.PI / 2);
+  const wheels = [];
+  for (const [wx, wz] of [[-0.88, 1.35], [0.88, 1.35], [-0.88, -1.35], [0.88, -1.35]]) {
+    const w = new THREE.Mesh(wheelGeo, tyre);
+    w.position.set(wx, 0.36, wz);
+    wheels.push(w);
+    group.add(w);
+  }
+  const lampMat = new THREE.MeshBasicMaterial({ color: 0xfff6c8 });
+  for (const lx of [-0.6, 0.6]) {
+    const lamp = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.14, 0.06), lampMat);
+    lamp.position.set(lx, 0.62, 2.11);
+    group.add(lamp);
+  }
+  const tailMat = new THREE.MeshBasicMaterial({ color: 0xc0392b });
+  for (const lx of [-0.6, 0.6]) {
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.14, 0.06), tailMat);
+    tail.position.set(lx, 0.62, -2.11);
+    group.add(tail);
+  }
+  group.userData = { wheels, body };
+  return group;
+}
+
+export function createRenderer(canvas, city) {
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(PALETTE.sky);
+  scene.fog = new THREE.Fog(PALETTE.fog, 130, 430);
+  const camera = new THREE.PerspectiveCamera(62, 1, 0.1, 900);
+
+  scene.add(new THREE.HemisphereLight(PALETTE.hemiSky, PALETTE.hemiGround, 0.95));
+  const sun = new THREE.DirectionalLight(PALETTE.sun, 2.1);
+  sun.position.set(120, 180, 60);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(1024, 1024);
+  sun.shadow.camera.left = -160;
+  sun.shadow.camera.right = 160;
+  sun.shadow.camera.top = 160;
+  sun.shadow.camera.bottom = -160;
+  sun.shadow.camera.far = 500;
+  scene.add(sun);
+
+  const ground = new THREE.Mesh(
+    new THREE.PlaneGeometry(WORLD, WORLD),
+    new THREE.MeshLambertMaterial({ map: groundTexture() }),
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  // Buildings: one shared box, one facade texture per colour, roof in plain colour.
+  const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+  boxGeo.translate(0, 0.5, 0);
+  const facadeCache = new Map();
+  for (const b of city.buildings) {
+    if (!facadeCache.has(b.color)) {
+      facadeCache.set(b.color, facadeTexture(b.color, false));
+    }
+    const tex = facadeCache.get(b.color).clone();
+    tex.needsUpdate = true;
+    tex.repeat.set(1, Math.max(1, Math.round(b.h / 14)));
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    const side = new THREE.MeshLambertMaterial({ map: tex });
+    const roof = new THREE.MeshLambertMaterial({ color: b.color });
+    const mesh = new THREE.Mesh(boxGeo, [side, side, roof, roof, side, side]);
+    mesh.position.set(b.x, 0, b.z);
+    mesh.scale.set(b.w, b.h, b.d);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    scene.add(mesh);
+  }
+
+  const poleMat = new THREE.MeshLambertMaterial({ color: PALETTE.lampPole });
+  const glowMat = new THREE.MeshBasicMaterial({ color: PALETTE.lampGlow });
+  for (const lamp of city.lamps) {
+    const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.09, 5.2, 6), poleMat);
+    pole.position.set(lamp.x, 2.6, lamp.z);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 8, 6), glowMat);
+    head.position.set(lamp.x, 5.3, lamp.z);
+    scene.add(pole, head);
+  }
+  const trunkMat = new THREE.MeshLambertMaterial({ color: PALETTE.palmTrunk });
+  const leafMat = new THREE.MeshLambertMaterial({ color: PALETTE.palmLeaf });
+  for (const palm of city.palms) {
+    const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.22, 4.4, 6), trunkMat);
+    trunk.position.set(palm.x, 2.2, palm.z);
+    trunk.rotation.z = 0.08;
+    const crown = new THREE.Mesh(new THREE.IcosahedronGeometry(1.7, 0), leafMat);
+    crown.position.set(palm.x + 0.35, 4.9, palm.z);
+    crown.scale.y = 0.75;
+    crown.castShadow = true;
+    scene.add(trunk, crown);
+  }
+
+  // Mission marker: a tall amber beacon so the objective reads at a glance.
+  const beacon = new THREE.Group();
+  const beam = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.5, 0.5, 60, 10, 1, true),
+    new THREE.MeshBasicMaterial({ color: 0xffc93c, transparent: true, opacity: 0.35, side: THREE.DoubleSide }),
+  );
+  beam.position.y = 30;
+  const pin = new THREE.Mesh(
+    new THREE.ConeGeometry(1.1, 2.6, 10),
+    new THREE.MeshBasicMaterial({ color: 0xffc93c }),
+  );
+  pin.position.y = 4;
+  pin.rotation.x = Math.PI;
+  beacon.add(beam, pin);
+  scene.add(beacon);
 
   function resize() {
-    const ratio = window.devicePixelRatio || 1;
-    const width = Math.round(window.innerWidth * ratio);
-    const height = Math.round(window.innerHeight * ratio);
-    canvas.width = width;
-    canvas.height = height;
-    view.scale = Math.min(width / FIELD.width, height / FIELD.height);
-    view.x = (width - FIELD.width * view.scale) / 2;
-    view.y = (height - FIELD.height * view.scale) / 2;
+    const w = window.innerWidth;
+    const h = window.innerHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
   }
-
-  const fonts = new Map();
-  function text(value, x, y, size, color, align) {
-    if (!fonts.has(size)) fonts.set(size, `${size}px ${FONT}`);
-    context.font = fonts.get(size);
-    context.fillStyle = color;
-    context.textAlign = align;
-    context.fillText(value, x, y);
-  }
-
-  function drawField(state) {
-    context.fillStyle = PALETTE.sky;
-    context.fillRect(0, 0, FIELD.width, FIELD.height);
-    context.fillStyle = PALETTE.ground;
-    context.fillRect(0, FIELD.groundY, FIELD.width, FIELD.height - FIELD.groundY);
-
-    const items = state.items;
-    for (let index = 0; index < items.length; index += 1) {
-      const item = items[index];
-      if (!item.active) continue;
-      if (item.kind === KIND_COIN) {
-        context.fillStyle = PALETTE.coin;
-        context.beginPath();
-        context.arc(item.x + item.width / 2, item.y + item.height / 2, item.width / 2, 0, Math.PI * 2);
-        context.fill();
-      } else {
-        context.fillStyle = PALETTE.block;
-        context.fillRect(item.x, item.y, item.width, item.height);
-      }
-    }
-
-    const player = state.player;
-    // Blink while invulnerable after a hit: hidden on every other tenth of a second.
-    if (player.invulnerable === 0 || Math.floor(player.invulnerable * 10) % 2 === 1) {
-      context.fillStyle = PALETTE.player;
-      context.fillRect(player.x, player.y, player.width, player.height);
-    }
-  }
-
-  function drawHud(state) {
-    context.textBaseline = 'top';
-    text(scoreLabel(state.score), 24, 20, 28, PALETTE.text, 'left');
-    text(levelLabel(state.level), FIELD.width / 2, 20, 28, PALETTE.text, 'center');
-    const firstLife = FIELD.width - 24 - LIVES * (LIFE_SIZE + LIFE_GAP) + LIFE_GAP;
-    text('Lives', firstLife - 12, 20, 28, PALETTE.text, 'right');
-    for (let life = 0; life < LIVES; life += 1) {
-      context.fillStyle = life < state.lives ? PALETTE.player : PALETTE.ground;
-      context.fillRect(firstLife + life * (LIFE_SIZE + LIFE_GAP), 24, LIFE_SIZE, LIFE_SIZE);
-    }
-  }
-
-  function drawPanel(title, lines, prompt) {
-    const height = PANEL.top + lines.length * PANEL.line + PANEL.bottom;
-    const x = (FIELD.width - PANEL.width) / 2;
-    const y = (FIELD.height - height) / 2;
-    context.fillStyle = PALETTE.panel;
-    context.fillRect(x, y, PANEL.width, height);
-    context.textBaseline = 'alphabetic';
-    text(title, FIELD.width / 2, y + 78, 48, PALETTE.text, 'center');
-    for (let index = 0; index < lines.length; index += 1) {
-      text(lines[index], FIELD.width / 2, y + PANEL.top + index * PANEL.line, 22, PALETTE.muted, 'center');
-    }
-    text(prompt, FIELD.width / 2, y + height - 40, 24, PALETTE.coin, 'center');
-  }
-
-  const TITLE_LINES = ['Dodge the red blocks. Catch the gold coins.', 'Move with ← → or A D.  Pause with P.', ''];
-  const PAUSED_LINES = ['The blocks will wait for you.'];
-  const OVER_LINES = ['', ''];
-
-  /** Paint one frame: the field, then the HUD or a panel for the screen the game is on. */
-  function draw(state, screen, best) {
-    context.setTransform(1, 0, 0, 1, 0, 0);
-    context.fillStyle = PALETTE.backdrop;
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.setTransform(view.scale, 0, 0, view.scale, view.x, view.y);
-    drawField(state);
-    if (screen === SCREEN_TITLE) {
-      TITLE_LINES[2] = bestLabel(best);
-      drawPanel('Block Dodger', TITLE_LINES, 'Press Space or click to start');
-      return;
-    }
-    drawHud(state);
-    if (screen === SCREEN_PAUSED) drawPanel('Paused', PAUSED_LINES, 'Press P to resume');
-    else if (screen === SCREEN_OVER) {
-      OVER_LINES[0] = finalLabel(state.score);
-      OVER_LINES[1] = bestLabel(best);
-      drawPanel('Game over', OVER_LINES, 'Press Space or click to play again');
-    }
-  }
-
   resize();
   window.addEventListener('resize', resize);
-  return { draw };
+
+  return {
+    scene,
+    camera,
+    makePerson: makePersonMesh,
+    makeCar: makeCarMesh,
+    setBeacon(x, z, visible) {
+      beacon.position.set(x, 0, z);
+      beacon.visible = visible;
+    },
+    placeCamera(target, yaw, pitch, dist, lift = 0) {
+      const cp = Math.cos(pitch);
+      camera.position.set(
+        target.x + Math.sin(yaw) * cp * dist,
+        target.y + Math.sin(pitch) * dist + lift,
+        target.z + Math.cos(yaw) * cp * dist,
+      );
+      camera.lookAt(target.x, target.y + 1.5, target.z);
+    },
+    render() {
+      renderer.render(scene, camera);
+    },
+  };
 }
