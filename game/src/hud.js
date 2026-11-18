@@ -30,7 +30,7 @@ export function createHud() {
   };
   const hud = el('hud');
   let last = {
-    money: -1, health: -1, wanted: -1, ammo: '', speed: -1,
+    money: -1, health: -1, wanted: -1, ammo: '', speed: -1, driving: false,
     objective: '', hint: '', banner: '',
   };
 
@@ -39,6 +39,11 @@ export function createHud() {
       node.hidden = key !== name;
     }
     hud.hidden = name === 'title';
+    // A screen change can flip the driving flag while the speed number stays
+    // put (exiting a stopped car, respawning on foot): force the next update
+    // to rewrite the speed panel instead of trusting the number cache, so it
+    // can never go stale across title / play / paused / over / respawn.
+    last.speed = -1;
   }
 
   function drawMinimap(state, city) {
@@ -114,10 +119,14 @@ export function createHud() {
       last.ammo = ammoText;
     }
     const kmh = Math.round(Math.abs(state.speed || 0) * 3.6);
-    if (kmh !== last.speed) {
+    // The speed panel must refresh when the driving flag flips, not only when
+    // the number changes: exiting a stopped car leaves kmh at 0, so a
+    // speed-only cache would keep showing "0 km/h" as if still driving.
+    if (kmh !== last.speed || state.driving !== last.driving) {
       speed.textContent = state.driving ? `${kmh} km/h` : '';
       speed.style.display = state.driving ? '' : 'none';
       last.speed = kmh;
+      last.driving = state.driving;
     }
     if (state.objective !== last.objective) {
       objective.textContent = state.objective;

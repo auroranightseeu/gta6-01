@@ -17,6 +17,12 @@
   #speed { bottom: 16px; right: 16px; font-size: 26px; font-weight: 700; }
   #objective { bottom: 16px; left: 12px; max-width: 46vw; font-size: 16px; }
   #hint { bottom: 16px; left: 50%; transform: translateX(-50%); font-size: 13px; opacity: .85; white-space: nowrap; }
+  /* Narrow screens: the centred hint would sit on top of the objective line,
+     so the hint moves to its own row above it, left-aligned. */
+  @media (max-width: 1100px) {
+    #objective { max-width: 60vw; font-size: 15px; }
+    #hint { left: 12px; transform: none; bottom: 68px; }
+  }
   #banner { top: 64px; left: 50%; transform: translateX(-50%); font-size: 20px; font-weight: 700; color: #ffc93c; white-space: nowrap; }
   .screen { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(8, 12, 20, .72); color: #eef1f5; z-index: 5; }
   .screen[hidden] { display: none; }

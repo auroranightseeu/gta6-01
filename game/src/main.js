@@ -38,27 +38,6 @@ const canvas = document.getElementById('game');
 const status = document.getElementById('status');
 const game = buildGame();
 
-// Debug hooks for automated playtests: read state, teleport Rio. Kept for v2
-// verification; v3 strips them before submit.
-window.__dbg = () => ({
-  screen: game.screen, x: +game.player.x.toFixed(1), z: +game.player.z.toFixed(1),
-  driving: game.driving !== null, speed: +game.speed.toFixed(1),
-  money: game.money, health: Math.round(game.health),
-  missionDone: game.missions.done[0], missionIndex: game.missions.index,
-  missionsDone: [...game.missions.done], wanted: game.wanted,
-  ammoMag: game.combat.mag, ammoReserve: game.combat.reserve,
-  police: game.police.cars.length, hostilesDown: game.missions.hostilesDown,
-  policePos: game.police.cars.map((c) => ({ x: +c.x.toFixed(1), z: +c.z.toFixed(1) })),
-  flash: game.combat.flash.visible, tracer: game.combat.tracer.visible,
-  cars: game.cars.map((c) => ({ x: +c.x.toFixed(1), z: +c.z.toFixed(1) })),
-  traffic: game.traffic.cars.map((c) => ({ x: +c.x.toFixed(1), z: +c.z.toFixed(1) })),
-});
-window.__dbgTeleport = (x, z) => {
-  game.player.x = x;
-  game.player.z = z;
-  game.player.mesh.position.set(x, 0, z);
-};
-
 function buildGame() {
   const random = createRandom(seed);
   const city = createCity(random);

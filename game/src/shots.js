@@ -62,8 +62,19 @@ export function stageShot(game, name, resetGame) {
     return { screen: SCREEN_PLAY };
   }
   if (name === 'foot') {
-    // Rio walks the sidewalk up the -25 road, traffic and pedestrians passing by.
-    game.player.x = -16;
+    // Rio walks up the middle of the -25 road, camera behind him: the street
+    // recedes ahead with traffic and pedestrians at the edges and the city
+    // behind, instead of the east sidewalk, where the tall block at (-9, -91)
+    // fills the right half of the frame. Traffic lanes sit 3.4 m either side
+    // of the centreline, so cars pass Rio without clipping him. One traffic
+    // car is put on his road, northbound in the west lane behind him, so it
+    // overtakes him during the walk and is visible ahead of him in the frame.
+    const pass = game.traffic.cars[0];
+    pass.lane = { line: -25, vertical: true, dir: -1, lane: -3.4 };
+    pass.x = -28.4;
+    pass.z = -40;
+    pass.mesh.position.set(-28.4, 0, -40);
+    game.player.x = -25;
     game.player.z = -60;
     game.player.heading = Math.PI;
     game.player.mesh.position.set(-16, 0, -60);
