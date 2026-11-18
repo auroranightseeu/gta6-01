@@ -1,7 +1,8 @@
-// The DOM HUD over the 3D view: money, health, wanted stars, speed, the objective line,
-// the controls hint, and a 2D top-down minimap (roads, blocks, player arrow, cars, the
-// mission marker). Screens are plain overlays shown and hidden by id.
-import { CITY, FONT, MISSION_MARKER } from './config.js';
+// The DOM HUD over the 3D view: money, health, wanted stars, ammo, speed, the
+// objective line, the controls hint, a mission-complete banner, and a 2D top-down
+// minimap (roads, blocks, player arrow, cars, police in red, ammo crates in green,
+// the mission marker). Screens are plain overlays shown and hidden by id.
+import { CITY, FONT } from './config.js';
 
 const MAP_SIZE = 180;
 const MAP_SCALE = MAP_SIZE / (CITY.bound * 2 + 16);
@@ -15,9 +16,11 @@ export function createHud() {
   const money = el('money');
   const health = el('health');
   const wanted = el('wanted');
+  const ammo = el('ammo');
   const speed = el('speed');
   const objective = el('objective');
   const hint = el('hint');
+  const banner = el('banner');
   const minimap = el('minimap');
   const mapCtx = minimap.getContext('2d');
   const screens = {
@@ -26,7 +29,10 @@ export function createHud() {
     over: el('screen-over'),
   };
   const hud = el('hud');
-  let last = { money: -1, health: -1, wanted: -1, speed: -1, objective: '', hint: '' };
+  let last = {
+    money: -1, health: -1, wanted: -1, ammo: '', speed: -1,
+    objective: '', hint: '', banner: '',
+  };
 
   function showScreen(name) {
     for (const [key, node] of Object.entries(screens)) {
@@ -55,15 +61,25 @@ export function createHud() {
     for (const b of city.buildings) {
       g.fillRect(toMap(b.x - b.w / 2), toMap(b.z - b.d / 2), b.w * MAP_SCALE, b.d * MAP_SCALE);
     }
-    if (!state.missionDone) {
+    if (state.missionTarget) {
       g.fillStyle = '#ffc93c';
       g.beginPath();
-      g.arc(toMap(MISSION_MARKER.x), toMap(MISSION_MARKER.z), 5, 0, Math.PI * 2);
+      g.arc(toMap(state.missionTarget.x), toMap(state.missionTarget.z), 5, 0, Math.PI * 2);
       g.fill();
     }
     g.fillStyle = '#e8e4d8';
     for (const car of state.cars) {
       g.fillRect(toMap(car.x) - 2, toMap(car.z) - 2, 4, 4);
+    }
+    g.fillStyle = '#2ecc71';
+    for (const p of state.pickups || []) {
+      if (p.active) g.fillRect(toMap(p.x) - 2, toMap(p.z) - 2, 4, 4);
+    }
+    g.fillStyle = '#ff4444';
+    for (const car of state.police || []) {
+      g.beginPath();
+      g.arc(toMap(car.x), toMap(car.z), 3.5, 0, Math.PI * 2);
+      g.fill();
     }
     // Player arrow, pointing along the heading.
     const px = toMap(state.player.x);
@@ -92,6 +108,11 @@ export function createHud() {
       wanted.style.color = state.wanted > 0 ? '#ffd94d' : '#7d8590';
       last.wanted = state.wanted;
     }
+    const ammoText = `Pistol ${state.ammoMag} / ${state.ammoReserve}${state.reloading ? ' · reloading…' : ''}`;
+    if (ammoText !== last.ammo) {
+      ammo.textContent = ammoText;
+      last.ammo = ammoText;
+    }
     const kmh = Math.round(Math.abs(state.speed || 0) * 3.6);
     if (kmh !== last.speed) {
       speed.textContent = state.driving ? `${kmh} km/h` : '';
@@ -105,6 +126,11 @@ export function createHud() {
     if (state.hint !== last.hint) {
       hint.textContent = state.hint;
       last.hint = state.hint;
+    }
+    if ((state.banner || '') !== last.banner) {
+      banner.textContent = state.banner || '';
+      banner.style.display = state.banner ? '' : 'none';
+      last.banner = state.banner || '';
     }
     drawMinimap(state, city);
   }

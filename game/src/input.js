@@ -4,6 +4,10 @@
 export const ACTION_CONFIRM = 1;
 export const ACTION_PAUSE = 2;
 export const ACTION_ENTER = 4;
+export const ACTION_PUNCH = 8;
+export const ACTION_RELOAD = 16;
+export const ACTION_MUTE = 32;
+export const ACTION_FIRE = 64;
 
 const FORWARD = new Set(['KeyW', 'ArrowUp']);
 const BACK = new Set(['KeyS', 'ArrowDown']);
@@ -14,12 +18,17 @@ const HANDBRAKE = new Set(['Space']);
 const CONFIRM = new Set(['Enter']);
 const PAUSE = new Set(['KeyP', 'Escape']);
 const ENTER = new Set(['KeyE']);
+const PUNCH = new Set(['KeyF']);
+const RELOAD = new Set(['KeyR']);
+const MUTE = new Set(['KeyM']);
+const FIRE = new Set(['KeyG']);
 
 export function createInput(canvas) {
   const held = new Set();
   let actions = 0;
   let mouseDX = 0;
   let mouseDY = 0;
+  let fireQueued = false;
 
   window.addEventListener('keydown', (event) => {
     if (CONFIRM.has(event.code)) {
@@ -28,6 +37,14 @@ export function createInput(canvas) {
       if (!event.repeat) actions |= ACTION_PAUSE;
     } else if (ENTER.has(event.code)) {
       if (!event.repeat) actions |= ACTION_ENTER;
+    } else if (PUNCH.has(event.code)) {
+      if (!event.repeat) actions |= ACTION_PUNCH;
+    } else if (RELOAD.has(event.code)) {
+      if (!event.repeat) actions |= ACTION_RELOAD;
+    } else if (MUTE.has(event.code)) {
+      if (!event.repeat) actions |= ACTION_MUTE;
+    } else if (FIRE.has(event.code)) {
+      if (!event.repeat) actions |= ACTION_FIRE;
     } else if (
       FORWARD.has(event.code) || BACK.has(event.code) || LEFT.has(event.code) ||
       RIGHT.has(event.code) || RUN.has(event.code) || HANDBRAKE.has(event.code)
@@ -46,6 +63,14 @@ export function createInput(canvas) {
       mouseDY += event.movementY;
     }
   });
+  // Left or right click fires the pistol while playing (the click that grabs
+  // pointer lock does not fire: the lock is not held yet at that moment).
+  canvas.addEventListener('mousedown', (event) => {
+    if (document.pointerLockElement === canvas && (event.button === 0 || event.button === 2)) {
+      fireQueued = true;
+    }
+  });
+  canvas.addEventListener('contextmenu', (event) => event.preventDefault());
 
   const has = (set) => {
     for (const code of set) if (held.has(code)) return true;
@@ -99,6 +124,12 @@ export function createInput(canvas) {
       const taken = actions;
       actions = 0;
       return taken;
+    },
+    /** True once if the pistol trigger was pulled (mouse click or G) since last call. */
+    takeFire() {
+      const f = fireQueued;
+      fireQueued = false;
+      return f;
     },
   };
 }

@@ -133,6 +133,59 @@ function makeCarMesh(color) {
   return group;
 }
 
+// A police car: white body, black doors and hood, red/blue light bar on the roof.
+// The bar lights are separate meshes so police.js can flash them.
+function makePoliceCarMesh() {
+  const group = makeCarMesh(PALETTE.policeWhite);
+  const black = new THREE.MeshLambertMaterial({ color: PALETTE.policeBlack });
+  const hood = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.1, 1.1), black);
+  hood.position.set(0, 0.86, 1.5);
+  const trunk = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.1, 0.9), black);
+  trunk.position.set(0, 0.86, -1.65);
+  group.add(hood, trunk);
+  const doorGeo = new THREE.BoxGeometry(0.06, 0.5, 2.0);
+  for (const sx of [-1, 1]) {
+    const door = new THREE.Mesh(doorGeo, black);
+    door.position.set(sx * 0.97, 0.62, 0);
+    group.add(door);
+  }
+  const bar = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.14, 0.34), black);
+  bar.position.set(0, 1.42, -0.25);
+  group.add(bar);
+  const lightR = new THREE.Mesh(
+    new THREE.BoxGeometry(0.5, 0.16, 0.3),
+    new THREE.MeshBasicMaterial({ color: PALETTE.policeRed }),
+  );
+  lightR.position.set(-0.28, 1.54, -0.25);
+  const lightB = new THREE.Mesh(
+    new THREE.BoxGeometry(0.5, 0.16, 0.3),
+    new THREE.MeshBasicMaterial({ color: PALETTE.policeBlue }),
+  );
+  lightB.position.set(0.28, 1.54, -0.25);
+  group.add(lightR, lightB);
+  group.userData.lightR = lightR;
+  group.userData.lightB = lightB;
+  return group;
+}
+
+// An ammo pickup: a small floating green crate, spun by combat.js.
+function makePickupMesh() {
+  const group = new THREE.Group();
+  const box = new THREE.Mesh(
+    new THREE.BoxGeometry(0.7, 0.7, 0.7),
+    new THREE.MeshLambertMaterial({ color: PALETTE.pickup, emissive: 0x1a5c34 }),
+  );
+  box.position.y = 0.9;
+  const lid = new THREE.Mesh(
+    new THREE.BoxGeometry(0.74, 0.12, 0.74),
+    new THREE.MeshBasicMaterial({ color: 0xd5f5e3 }),
+  );
+  lid.position.y = 1.28;
+  group.add(box, lid);
+  group.userData.box = box;
+  return group;
+}
+
 export function createRenderer(canvas, city) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
@@ -239,6 +292,8 @@ export function createRenderer(canvas, city) {
     camera,
     makePerson: makePersonMesh,
     makeCar: makeCarMesh,
+    makePoliceCar: makePoliceCarMesh,
+    makePickup: makePickupMesh,
     setBeacon(x, z, visible) {
       beacon.position.set(x, 0, z);
       beacon.visible = visible;
