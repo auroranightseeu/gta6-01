@@ -17,6 +17,7 @@ export function createHud() {
   const health = el('health');
   const wanted = el('wanted');
   const ammo = el('ammo');
+  const parcels = el('parcels');
   const speed = el('speed');
   const objective = el('objective');
   const hint = el('hint');
@@ -29,6 +30,7 @@ export function createHud() {
     over: el('screen-over'),
   };
   const hud = el('hud');
+  let lastPackageCount = -1;
   let last = {
     money: -1, health: -1, wanted: -1, ammo: '', speed: -1, driving: false,
     objective: '', hint: '', banner: '',
@@ -71,6 +73,12 @@ export function createHud() {
       g.beginPath();
       g.arc(toMap(state.missionTarget.x), toMap(state.missionTarget.z), 5, 0, Math.PI * 2);
       g.fill();
+    }
+    g.fillStyle = '#ffbd63';
+    for (const item of state.packages || []) {
+      if (item.active) {
+        g.fillRect(toMap(item.x) - 2, toMap(item.z) - 2, 4, 4);
+      }
     }
     g.fillStyle = '#e8e4d8';
     for (const car of state.cars) {
@@ -131,6 +139,13 @@ export function createHud() {
     if (state.objective !== last.objective) {
       objective.textContent = state.objective;
       last.objective = state.objective;
+    }
+    // Parcels are ambient collectibles, not the mission: their count lives in
+    // the top-left panel (with the banner on pickup), never appended to the
+    // objective line — a long objective must never collide with the hint.
+    if (state.packageCount !== lastPackageCount) {
+      parcels.textContent = `Parcels ${state.packageCount || 0}/8`;
+      lastPackageCount = state.packageCount;
     }
     if (state.hint !== last.hint) {
       hint.textContent = state.hint;

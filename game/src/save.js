@@ -27,6 +27,7 @@ export function writeSave(state) {
       money: state.money, health: state.health, x: state.x, z: state.z,
       missionIndex: state.missionIndex, missionsDone: state.missionsDone,
       missionStage: state.missionStage, ammoMag: state.ammoMag, ammoReserve: state.ammoReserve,
+      packageCount: state.packageCount || 0, packageFound: state.packageFound || [],
     }));
   } catch {
     // Storage can be off (private windows): the save then lasts this visit only.

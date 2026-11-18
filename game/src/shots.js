@@ -12,7 +12,7 @@ import { beginMission, missionText } from './missions.js';
 const START_SECONDS = 5;
 const DRIVE_SECONDS = 5.5;
 const FOOT_SECONDS = 6;
-const CHASE_SECONDS = 2.2; // short: the interceptors close fast head-on
+const CHASE_SECONDS = 4.2; // let the interceptors close into the camera frame
 
 function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
@@ -36,11 +36,11 @@ export function stageShot(game, name, resetGame) {
       t.mesh.position.set(t.x, 0, t.z);
     }
     const car = game.cars[0];
-    car.x = -25;
+    car.x = -125;
     car.z = -110;
     car.heading = 0;
     car.speed = 0;
-    car.mesh.position.set(-25, 0, -110);
+    car.mesh.position.set(-125, 0, -110);
     car.mesh.rotation.y = 0;
     game.driving = car;
     car.parked = false;
@@ -52,7 +52,7 @@ export function stageShot(game, name, resetGame) {
     game.camPitch = 0.32;
     game.hint = 'WASD drive · Space handbrake · E exit car · P pause';
     for (let i = 0; i < DRIVE_SECONDS / STEP; i += 1) {
-      const steer = clamp(-car.heading * 2 - (car.x + 25) * 0.06, -1, 1);
+      const steer = clamp(-car.heading * 2 - (car.x + 125) * 0.06, -1, 1);
       driveCar(car, STEP, { throttle: 1, steer, handbrake: false }, game.city);
       game.player.x = car.x;
       game.player.z = car.z;
@@ -74,6 +74,15 @@ export function stageShot(game, name, resetGame) {
     pass.x = -28.4;
     pass.z = -40;
     pass.mesh.position.set(-28.4, 0, -40);
+    // Seed several walkers along the first blocks ahead and to either sidewalk of Rio.
+    for (const [i, x, z] of [[0, -35, -22], [1, -15, -8], [2, -35, 8], [3, -15, 24], [4, -35, 40], [5, -15, 56]]) {
+      const p = game.traffic.peds[i];
+      p.x = x;
+      p.z = z;
+      p.vertical = false;
+      p.dir = i % 2 ? 1 : -1;
+      p.mesh.position.set(x, 0, z);
+    }
     game.player.x = -25;
     game.player.z = -60;
     game.player.heading = Math.PI;
@@ -106,11 +115,11 @@ export function stageShot(game, name, resetGame) {
       t.mesh.position.set(t.x, 0, t.z);
     }
     const car = game.cars[0];
-    car.x = -25;
+    car.x = -125;
     car.z = -110;
     car.heading = 0;
     car.speed = 0;
-    car.mesh.position.set(-25, 0, -110);
+    car.mesh.position.set(-125, 0, -110);
     car.mesh.rotation.y = 0;
     game.driving = car;
     car.parked = false;
@@ -121,14 +130,14 @@ export function stageShot(game, name, resetGame) {
     game.camYaw = Math.PI;
     game.camPitch = 0.32;
     game.hint = 'WASD drive · Space handbrake · E exit car · P pause';
-    const cop1 = spawnPoliceCar(game.police, -31, -20, game.city);
+    const cop1 = spawnPoliceCar(game.police, -128.4, -58, game.city);
     cop1.heading = Math.PI;
     cop1.mesh.rotation.y = Math.PI;
-    const cop2 = spawnPoliceCar(game.police, -19, -24, game.city);
+    const cop2 = spawnPoliceCar(game.police, -121.6, -30, game.city);
     cop2.heading = Math.PI;
     cop2.mesh.rotation.y = Math.PI;
     for (let i = 0; i < CHASE_SECONDS / STEP; i += 1) {
-      const steer = clamp(-car.heading * 2 - (car.x + 25) * 0.06, -1, 1);
+      const steer = clamp(-car.heading * 2 - (car.x + 125) * 0.06, -1, 1);
       driveCar(car, STEP, { throttle: 1, steer, handbrake: false }, game.city);
       game.player.x = car.x;
       game.player.z = car.z;

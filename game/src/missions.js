@@ -48,12 +48,30 @@ export const MISSIONS = [
     intro: "Ana: drive my client to the docks, west edge. Rivals will be waiting. End it.",
     objective: `Drive Ana's client to the docks ($${MISSION_REWARDS[4]})`,
     defendLine: 'Rivals at the docks! Take them down — Ana’s crew has your back.',
-    doneLine: 'Ana: the docks are ours. $500. Solmar is yours, Rio — all of it.',
+    doneLine: 'Ana: the docks are ours. $500. One last pair of jobs, Rio.',
+  },
+  {
+    name: 'The Night Ferry',
+    reward: MISSION_REWARDS[5],
+    target: { x: -112, z: -12, label: 'ferry office' },
+    target2: { x: 112, z: 12, label: 'east garage' },
+    intro: 'Ana: pick up the ferry manifest on the west side. Bring it to the east garage.',
+    objective: `Collect Ana's ferry manifest ($${MISSION_REWARDS[5]})`,
+    pickupLine: 'Manifest secured. East garage, and keep the route quiet.',
+    doneLine: 'Ana: the ferry is clear. $300, Rio.',
+  },
+  {
+    name: 'The Last Light',
+    reward: MISSION_REWARDS[6],
+    target: { x: 0, z: 112, label: 'hilltop lookout' },
+    intro: 'Ana: one last handoff at the hilltop lookout. Take the city in on your way.',
+    objective: `Make the final handoff at the hilltop ($${MISSION_REWARDS[6]})`,
+    doneLine: 'Ana: that is seven. $600, Rio. Solmar belongs to you.',
   },
 ];
 
 export function createMissions() {
-  return { index: 0, done: [false, false, false, false, false], stage: 'go', timer: 0, hostilesDown: 0 };
+  return { index: 0, done: Array(MISSIONS.length).fill(false), stage: 'go', timer: 0, hostilesDown: 0 };
 }
 
 export function currentMission(m) {
@@ -68,7 +86,7 @@ export function allMissionsDone(m) {
 export function missionTarget(m) {
   const def = currentMission(m);
   if (!def) return null;
-  if (m.index === 1 && m.stage === 'deliver') return def.target2;
+  if (def.target2 && m.stage === 'deliver') return def.target2;
   if (m.index === 2) return null; // evade: no marker, just lose the cops
   if (m.index === 4 && m.stage === 'defend') return null; // defend: stay at the docks
   return def.target || null;
@@ -77,10 +95,10 @@ export function missionTarget(m) {
 export function missionText(m) {
   const def = currentMission(m);
   if (!def) return 'All jobs done — Solmar is yours.';
-  if (m.index === 1 && m.stage === 'deliver') {
+  if (def.target2 && m.stage === 'deliver') {
     const t = Math.max(0, Math.ceil(m.timer));
     const clock = m.timer > 0 ? ` · ${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')} left` : '';
-    return `Deliver the package south-east ($${def.reward}${clock})`;
+    return `Deliver the package (${def.target2.label || 'drop-off'}) ($${def.reward}${clock})`;
   }
   if (m.index === 2) return def.objective;
   if (m.index === 4 && m.stage === 'defend') {

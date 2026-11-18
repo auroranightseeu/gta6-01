@@ -22,8 +22,11 @@ export function createCity(random) {
           const h = (7 + random() * random() * 30) * centre;
           const x = bx + lx * (LOT / 2 + 1);
           const z = bz + lz * (LOT / 2 + 1);
-          const color = PALETTE.facades[Math.floor(random() * PALETTE.facades.length)];
-          buildings.push({ x, z, w, d, h, color });
+          if (bx === -50 && bz === 0 && lx === 1 && lz === 1) continue; // reserve a downtown landmark lot
+          const district = Math.abs(bx) + Math.abs(bz) <= 50 ? 'downtown' : bx <= -50 ? 'harbor' : 'residential';
+          const palette = PALETTE.districtFacades[district];
+          const color = palette[Math.floor(random() * palette.length)];
+          buildings.push({ x, z, w, d, h, color, district, landmark: district === 'downtown' && bx === -50 && bz === 0 });
           colliders.push({ minX: x - w / 2, maxX: x + w / 2, minZ: z - d / 2, maxZ: z + d / 2 });
         }
       }

@@ -4,8 +4,8 @@
 import { CAR } from './config.js';
 import { resolveCircle } from './world.js';
 
-export function createCar(renderer, x, z, heading, color) {
-  const mesh = renderer.makeCar(color);
+export function createCar(renderer, x, z, heading, color, type = 'sedan') {
+  const mesh = renderer.makeCar(color, type);
   renderer.scene.add(mesh);
   mesh.position.set(x, 0, z);
   mesh.rotation.y = heading;

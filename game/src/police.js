@@ -33,7 +33,7 @@ function spawnPoint(px, pz, random) {
 }
 
 export function createPolice(renderer) {
-  return { cars: [], renderer, hiddenTimer: 0 };
+  return { cars: [], roadblockCars: [], roadblockLevel: 0, renderer, hiddenTimer: 0 };
 }
 
 export function spawnPoliceCar(police, x, z, city) {
@@ -51,7 +51,10 @@ export function spawnPoliceCar(police, x, z, city) {
 
 export function clearPolice(police) {
   for (const car of police.cars) police.renderer.scene.remove(car.mesh);
+  for (const car of police.roadblockCars) police.renderer.scene.remove(car.mesh);
   police.cars.length = 0;
+  police.roadblockCars.length = 0;
+  police.roadblockLevel = 0;
   police.hiddenTimer = 0;
 }
 
@@ -61,6 +64,24 @@ function removePoliceCar(police, car) {
   if (i >= 0) police.cars.splice(i, 1);
 }
 
+function syncRoadblock(police, ctx) {
+  const level = ctx.wanted >= 4 ? ctx.wanted : 0;
+  if (level === police.roadblockLevel) return;
+  for (const car of police.roadblockCars) police.renderer.scene.remove(car.mesh);
+  police.roadblockCars.length = 0;
+  police.roadblockLevel = level;
+  if (!level) return;
+  const x = CITY.roadLines.reduce((best, line) => Math.abs(line - ctx.x) < Math.abs(best - ctx.x) ? line : best, CITY.roadLines[0]);
+  const z = clamp(ctx.z + (ctx.speed >= 0 ? 34 : -34), -CITY.bound + 6, CITY.bound - 6);
+  for (const [offset, heading] of [[-2.3, Math.PI / 2], [2.3, -Math.PI / 2]]) {
+    const mesh = police.renderer.makePoliceCar();
+    mesh.position.set(x + offset, 0, z);
+    mesh.rotation.y = heading;
+    police.renderer.scene.add(mesh);
+    police.roadblockCars.push({ mesh, x: x + offset, z, heading });
+  }
+}
+
 /**
  * Chase + cool-off. `ctx` is { x, z, driving, speed, wanted, time, city, random,
  * onBusted }. Returns nothing; mutates ctx.wanted via ctx.setWanted(n).
@@ -68,6 +89,7 @@ function removePoliceCar(police, car) {
  */
 export function updatePolice(police, ctx, dt) {
   const wanted = ctx.wanted;
+  syncRoadblock(police, ctx);
   const want = Math.min(wanted, POLICE.maxActive);
   while (police.cars.length < want) {
     const p = spawnPoint(ctx.x, ctx.z, ctx.random);

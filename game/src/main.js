@@ -45,7 +45,11 @@ function buildGame() {
   const input = createInput(canvas);
   const hud = createHud();
   const player = createPlayer(renderer, SPAWN.x, SPAWN.z);
-  const cars = city.parkedSpots.map((s) => createCar(renderer, s.x, s.z, s.heading, s.color));
+  const cars = city.parkedSpots.map((s, i) => {
+    const type = i % 3 === 0 ? 'sports' : i % 3 === 1 ? 'van' : 'pickup';
+    const colors = [0xff5a36, 0x218c91, 0xe0b146, 0x405f93];
+    return createCar(renderer, s.x, s.z, s.heading, i === 0 ? 0xff5a36 : (colors[i % colors.length] || s.color), type);
+  });
   const traffic = createTraffic(city, random, renderer);
   const police = createPolice(renderer);
   const combat = createCombat(renderer);
@@ -56,6 +60,7 @@ function buildGame() {
     wanted: 0, camYaw: 0, camPitch: 0.35,
     objective: '', hint: '', time: 0, saveTimer: 0, speed: 0,
     crimeAt: {}, banner: '', bannerUntil: 0, busted: false, stolen: [],
+    packages: [], packageCount: 0, packageFound: new Set(), packageMessage: '',
   };
   resetGame(g, false);
   return g;
@@ -109,6 +114,17 @@ function resetGame(g, fresh) {
   g.speed = 0;
   const target = missionTarget(g.missions);
   g.renderer.setBeacon(target ? target.x : MISSION_MARKER.x, target ? target.z : MISSION_MARKER.z, !!target);
+  for (const item of g.packages) g.renderer.scene.remove(item.mesh);
+  g.packageCount = 0;
+  g.packageFound = new Set();
+  g.packages = [
+    [-125, 75], [-75, 125], [25, 125], [125, 75], [125, -75], [75, -125], [-25, -125], [-125, -75],
+  ].map(([x, z], i) => {
+    const mesh = g.renderer.makePackage();
+    mesh.position.set(x, 0.55, z);
+    g.renderer.scene.add(mesh);
+    return { x, z, mesh, active: true, index: i };
+  });
   g.objective = missionText(g.missions);
   g.hint = 'WASD move · Shift run · E enter car · P pause';
 }
@@ -118,6 +134,8 @@ function saveState(g) {
     money: g.money, health: g.health, x: g.player.x, z: g.player.z,
     missionIndex: g.missions.index, missionsDone: [...g.missions.done],
     missionStage: g.missions.stage, ammoMag: g.combat.mag, ammoReserve: g.combat.reserve,
+    packageCount: g.packageCount,
+    packageFound: [...g.packageFound],
   };
 }
 
@@ -128,14 +146,20 @@ function applySave(g, save) {
   g.player.z = save.z;
   g.player.mesh.position.set(save.x, 0, save.z);
   g.missions.index = Math.min(save.missionIndex || 0, MISSIONS.length);
-  g.missions.done = (save.missionsDone || [false, false, false, false, false]).slice(0, 5);
-  while (g.missions.done.length < 5) g.missions.done.push(false);
+  g.missions.done = (save.missionsDone || Array(MISSIONS.length).fill(false)).slice(0, MISSIONS.length);
+  while (g.missions.done.length < MISSIONS.length) g.missions.done.push(false);
   g.missions.stage = save.missionStage || 'go';
   g.missions.hostilesDown = 0;
   const def = currentMission(g.missions);
   g.missions.timer = def && def.timed ? def.timed : 0;
   g.combat.mag = save.ammoMag ?? 12;
   g.combat.reserve = save.ammoReserve ?? 24;
+  g.packageFound = new Set((save.packageFound || []).filter((i) => Number.isInteger(i) && i >= 0 && i < g.packages.length));
+  g.packageCount = g.packageFound.size;
+  g.packages.forEach((item) => {
+    item.active = !g.packageFound.has(item.index);
+    item.mesh.visible = item.active;
+  });
   // Chase missions resume hot; a saved defend stage resumes with fresh rivals.
   if (g.missions.index === 2 || g.missions.index === 3) g.wanted = 2;
   if (g.missions.index === 4 && g.missions.stage === 'defend') {
@@ -166,6 +190,8 @@ function hudState(g) {
     player: g.player, cars: [...g.cars, ...g.traffic.cars],
     police: g.police.cars, pickups: g.combat.pickups,
     missionTarget: missionTarget(g.missions),
+    packages: g.packages,
+    packageCount: g.packageCount,
   };
 }
 
@@ -397,7 +423,7 @@ function stepWorld(g, dt) {
   const m = g.missions;
   const def = currentMission(m);
   if (def) {
-    if (m.index === 1 && m.timer > 0) m.timer -= dt;
+    if (def.target2 && m.timer > 0) m.timer -= dt;
     const target = missionTarget(m);
     const arrived = target && dist2(g.player.x, g.player.z, target.x, target.z) < 49;
     if (m.index === 0 && arrived) {
@@ -423,8 +449,33 @@ function stepWorld(g, dt) {
       announce(def.defendLine);
     } else if (m.index === 4 && m.stage === 'defend' && m.hostilesDown >= 3) {
       completeMission(g, 4);
+    } else if (def.target2 && m.stage === 'go' && arrived) {
+      m.stage = 'deliver';
+      sfx('pickup');
+      const drop = missionTarget(m);
+      g.renderer.setBeacon(drop.x, drop.z, true);
+      g.objective = missionText(m);
+      announce(def.pickupLine);
+    } else if (def.target2 && m.stage === 'deliver' && arrived) {
+      completeMission(g, m.index);
+    } else if (m.index !== 2 && m.index !== 4 && arrived) {
+      completeMission(g, m.index);
     }
-    if (m.index === 1 && m.stage === 'deliver') g.objective = missionText(m);
+  }
+  // Eight repeatable parcel pickups pay $25 each and reuse the amber-style world markers.
+  for (const item of g.packages) {
+    if (!item.active) continue;
+    item.mesh.rotation.y += dt * 0.9;
+    if (dist2(g.player.x, g.player.z, item.x, item.z) < 2.4) {
+      item.active = false;
+      item.mesh.visible = false;
+      g.packageFound.add(item.index);
+      g.packageCount = g.packageFound.size;
+      g.money += 25;
+      showBanner(g, `HARBOR PARCEL ${g.packageCount}/8  +$25`);
+      sfx('pickup');
+      writeSave(saveState(g));
+    }
   }
   g.saveTimer += dt;
   if (g.saveTimer > 10) {
@@ -441,7 +492,7 @@ function placeCamera(g) {
   const target = g.driving
     ? { x: g.driving.x, y: 0, z: g.driving.z }
     : { x: g.player.x, y: 0, z: g.player.z };
-  g.renderer.placeCamera(target, g.camYaw, g.camPitch, g.driving ? 11 : 7, g.driving ? 1 : 0);
+  g.renderer.placeCamera(target, g.camYaw, g.camPitch, g.driving ? 8.4 : 7, g.driving ? 0.45 : 0);
 }
 
 function runShot(name) {

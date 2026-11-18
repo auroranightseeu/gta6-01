@@ -12,7 +12,7 @@ export const CAR = {
   steer: 1.9, grip: 6, radius: 1.7, drag: 0.35,
 };
 export const TRAFFIC_CARS = 8;
-export const PEDESTRIANS = 14;
+export const PEDESTRIANS = 22;
 export const PARKED_CARS = 10;
 export const START_MONEY = 250;
 // Ana Deluca's office corner (mission 1 marker).
@@ -24,7 +24,7 @@ export const PACKAGE_DROPOFF = { x: 112, z: -112 };
 export const GETAWAY_MARKER = { x: -112, z: -112 };
 export const DOCKS = { x: -125, z: 25 };
 export const MISSION2_TIME = 120; // seconds to make the delivery; gentle, no fail
-export const MISSION_REWARDS = [100, 150, 200, 250, 500];
+export const MISSION_REWARDS = [100, 150, 200, 250, 500, 300, 600];
 // The safehouse Rio wakes up at after being busted or wasted; the respawn penalty.
 export const SAFEHOUSE = { x: -25, z: -18 };
 export const RESPAWN_PENALTY = 50;
@@ -32,7 +32,7 @@ export const RESPAWN_PENALTY = 50;
 // how far Rio must stay from every police car to cool a star off.
 export const POLICE = {
   maxActive: 4, cruise: 20, perStar: 2, maxSpeed: 30, turn: 2.4,
-  spawnDist: 70, tooFar: 95, sightDist: 45, bustDist: 3.4, bustSpeed: 3,
+  spawnDist: 52, tooFar: 82, sightDist: 45, bustDist: 3.4, bustSpeed: 3,
   decayBase: 4, decayPerStar: 2,
 };
 // Pistol: a 12-round magazine, reserve ammo, pickups around town.
@@ -48,9 +48,14 @@ export const PICKUP_SPOTS = [
 export const CRIME = { steal: 1, hitPed: 2, hitCar: 1, shoot: 1 };
 export const CRIME_COOLDOWN = 3; // seconds before the same crime can raise wanted again
 export const PALETTE = {
-  sky: 0x8ec8ee, fog: 0xc3d9ec, sun: 0xfff2d8, hemiSky: 0xbfd9ff, hemiGround: 0x8a7f70,
-  asphalt: 0x3c4148, sidewalk: 0x9a938a, curb: 0x7d766d,
+  sky: 0x8ec8ee, fog: 0xf0b9a3, sun: 0xffe5bd, hemiSky: 0xd8a7a0, hemiGround: 0x907766,
+  asphalt: 0x625b56, sidewalk: 0xb8a58e, curb: 0xd6c7b6,
   facades: [0xd9a066, 0xc98d7a, 0xe0c090, 0xa8b8c4, 0xcf9a8a, 0xb5c4a8, 0xd8b878, 0x9fb4c8],
+  districtFacades: {
+    harbor: [0xc9825c, 0xd49a6b, 0xb98567, 0xe0b779],
+    downtown: [0x829eae, 0x8faab6, 0x6f8798, 0xb1c2c8],
+    residential: [0xd9a066, 0xc98d7a, 0xe0c090, 0xcf9a8a, 0xd8b878],
+  },
   windowDark: '#2c3542', windowLit: '#ffd98a',
   palmTrunk: 0x7a5c3e, palmLeaf: 0x3f8f4f, lampPole: 0x2f3338, lampGlow: 0xffe9a8,
   carColors: [0xc0392b, 0x2e86c1, 0xf1c40f, 0x1abc9c, 0xe67e22, 0x8e44ad, 0xecf0f1, 0x2c3e50],

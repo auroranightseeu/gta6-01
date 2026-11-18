@@ -17,12 +17,16 @@ export function createTraffic(city, random, renderer) {
   for (let i = 0; i < TRAFFIC_CARS; i += 1) {
     const lane = pickLane(random);
     const along = (random() * 2 - 1) * 120;
+    const color = PALETTE.carColors[Math.floor(random() * PALETTE.carColors.length)];
+    const typeRoll = random();
+    const type = typeRoll < 0.14 ? 'sports' : typeRoll < 0.25 ? 'van' : typeRoll < 0.36 ? 'pickup' : 'sedan';
     const car = createCar(
       renderer,
       lane.vertical ? lane.line + lane.lane : along,
       lane.vertical ? along : lane.line + lane.lane,
       lane.vertical ? (lane.dir > 0 ? 0 : Math.PI) : (lane.dir > 0 ? Math.PI / 2 : -Math.PI / 2),
-      PALETTE.carColors[Math.floor(random() * PALETTE.carColors.length)],
+      color,
+      type,
     );
     car.parked = false;
     car.lane = lane;
@@ -36,7 +40,8 @@ export function createTraffic(city, random, renderer) {
     const vertical = random() < 0.5;
     const side = random() < 0.5 ? -9.5 : 9.5;
     const along = (random() * 2 - 1) * 120;
-    const mesh = renderer.makePerson(PALETTE.pedColors[Math.floor(random() * PALETTE.pedColors.length)]);
+    const style = i % 3 === 0 ? 1 : 0;
+    const mesh = renderer.makePerson(PALETTE.pedColors[Math.floor(random() * PALETTE.pedColors.length)], style);
     renderer.scene.add(mesh);
     peds.push({
       x: vertical ? line + side : along, z: vertical ? along : line + side,
