@@ -21,9 +21,12 @@ const CRATE_RESPAWN = 60;
 // pellets how many tracers/hit rolls per shot (shotgun pattern)
 // knock   metres of shove per hit            carDmg  damage added to a car per hit
 export const WEAPONS = {
-  pistol: { id: 'pistol', name: 'Pistol', magSize: 12, cooldown: 0.25, range: 30, spread: 0.035, pellets: 1, reload: 0.9, knock: 0, carDmg: 5, startMag: 12, startReserve: 24, crate: 12 },
-  smg: { id: 'smg', name: 'SMG', magSize: 30, cooldown: 0.075, range: 26, spread: 0.115, pellets: 1, reload: 1.15, knock: 0.25, carDmg: 3, startMag: 0, startReserve: 0, crate: 60 },
-  shotgun: { id: 'shotgun', name: 'Shotgun', magSize: 6, cooldown: 0.85, range: 15, spread: 0.30, pellets: 7, reload: 1.5, knock: 2.4, carDmg: 9, startMag: 0, startReserve: 0, crate: 12 },
+  // muzzle: distance from the shooter's centre to the barrel tip when aiming — the
+  // hand sits ~0.63 m ahead of the centre and the barrel runs (len - 0.07) m past
+  // it. Keep in step with the barrel lengths in GUN_GEO (render.js syncGuns).
+  pistol: { id: 'pistol', name: 'Pistol', magSize: 12, cooldown: 0.25, range: 30, spread: 0.035, pellets: 1, reload: 0.9, knock: 0, carDmg: 5, startMag: 12, startReserve: 24, crate: 12, muzzle: 0.9 },
+  smg: { id: 'smg', name: 'SMG', magSize: 30, cooldown: 0.075, range: 26, spread: 0.115, pellets: 1, reload: 1.15, knock: 0.25, carDmg: 3, startMag: 0, startReserve: 0, crate: 60, muzzle: 1.18 },
+  shotgun: { id: 'shotgun', name: 'Shotgun', magSize: 6, cooldown: 0.85, range: 15, spread: 0.30, pellets: 7, reload: 1.5, knock: 2.4, carDmg: 9, startMag: 0, startReserve: 0, crate: 12, muzzle: 1.48 },
 };
 export const WEAPON_ORDER = ['pistol', 'smg', 'shotgun'];
 
@@ -145,6 +148,17 @@ export function createCombat(renderer) {
   flash.visible = false;
   flash.frustumCulled = false;
   renderer.scene.add(flash);
+  // Drive-by gun: Rio is hidden inside the cabin while driving, so the person
+  // instancing has nothing to draw — but a shot out of the driver's window still
+  // needs a visible weapon at the muzzle, or the tracer starts from thin air.
+  // One dark box, shown at the window for a beat after a drive-by shot only.
+  const driveByGun = new THREE.Mesh(
+    new THREE.BoxGeometry(0.10, 0.15, 0.62),
+    new THREE.MeshLambertMaterial({ color: 0x23262c }),
+  );
+  driveByGun.visible = false;
+  driveByGun.frustumCulled = false;
+  renderer.scene.add(driveByGun);
   const pickups = PICKUP_SPOTS.map((s) => {
     const mesh = renderer.makePickup();
     mesh.position.set(s.x, 0, s.z);
@@ -166,7 +180,7 @@ export function createCombat(renderer) {
     },
     mag: AMMO.startMag, reserve: AMMO.startReserve,
     reloading: 0, cooldown: 0, punchCooldown: 0,
-    tracers, flash, flashT: 0,
+    tracers, flash, flashT: 0, driveByGun, driveByGunT: 0,
     pickups, crates, hostiles: [],
     // Seeded RNG for shot spread: no Math.random() in anything a screenshot depends on.
     random: createRandom(0x5c1a),
@@ -192,6 +206,8 @@ export function resetCombat(c) {
   c.tracers.t = 0;
   c.flash.visible = false;
   c.flashT = 0;
+  c.driveByGun.visible = false;
+  c.driveByGunT = 0;
   c.shotsFired = 0;
   c.kills = 0;
   for (const p of c.pickups) {
@@ -249,11 +265,14 @@ function showShots(c, segs) {
   c.tracers.geo.attributes.position.needsUpdate = true;
   c.tracers.mesh.visible = true;
   c.tracers.count = n;
-  c.tracers.t = 0.08;
+  // Long enough to read: at 0.08 s the tracer was gone before a single 60 fps
+  // frame could show it, and the flash (0.06 s) the same. 0.15/0.18 s is still a
+  // blink, but a real frame — and a screenshot — can catch it.
+  c.tracers.t = 0.15;
   const f = segs[0].from;
   c.flash.position.set(f.x, f.y, f.z);
   c.flash.visible = true;
-  c.flashT = 0.06;
+  c.flashT = 0.18;
 }
 
 // --- drive-by aim --------------------------------------------------------------------
@@ -344,7 +363,9 @@ export function driveByHybrid(renderer, ctx) {
 }
 
 /**
- * The aim ray for one shot. On foot it is a muzzle 1.2 m ahead of Rio along his heading;
+ * The aim ray for one shot. On foot it is a muzzle at the barrel tip along his heading
+ * (WEAPONS[].muzzle — the hand is ~0.63 m ahead of Rio when aiming and the barrel runs
+ * past it, so the flash and the tracer start at the muzzle, not at his body);
  * from behind the wheel it is the chosen drive-by method. Drive-by is detected from the car
  * Rio is sitting on (main.js parks him exactly on the car's x/z), so this works whether or
  * not the caller knows he is driving.
@@ -360,7 +381,14 @@ function aimRay(c, ctx) {
   }
   const fx = Math.sin(ctx.heading);
   const fz = Math.cos(ctx.heading);
-  return { from: { x: ctx.x + fx * 1.2, y: 1.3, z: ctx.z + fz * 1.2 }, fx, fz };
+  const m = (WEAPONS[c.weapon] || WEAPONS.pistol).muzzle;
+  // The barrel is in the right hand, 0.37 m to the shooter's right of the centreline
+  // (render.js syncGuns): the muzzle — and the flash and tracer that start there —
+  // sit on the gun, not on the body centreline. Local +X under heading h is world
+  // (cos h, 0, -sin h).
+  const rx = Math.cos(ctx.heading) * 0.37;
+  const rz = -Math.sin(ctx.heading) * 0.37;
+  return { from: { x: ctx.x + rx + fx * m, y: 1.35, z: ctx.z + rz + fz * m }, fx, fz };
 }
 
 /** Rotate a heading's (fx, fz) by `a` radians — the pattern/spread offset for one pellet. */
@@ -429,6 +457,16 @@ export function firePistol(c, ctx) {
     }
   }
   showShots(c, segs);
+  // Drive-by: the muzzle is the driver's window and Rio himself is hidden in the
+  // cabin, so put the gun itself at the window for a beat — barrel tip at the
+  // muzzle point, body back along the shot. On foot this never runs (no car).
+  if (ctx.car) {
+    const g = c.driveByGun;
+    g.position.set(ray.from.x - ray.fx * 0.2, ray.from.y, ray.from.z - ray.fz * 0.2);
+    g.rotation.y = Math.atan2(ray.fx, ray.fz);
+    g.visible = true;
+    c.driveByGunT = 0.25;
+  }
   if (!ctx.sanctioned) ctx.onCrime && ctx.onCrime(1, 'shoot', 'Gunfire! The cops heard that.');
   if (!bestObj) return 'fired';
   if (bestKind === 'hostile') {
@@ -552,6 +590,10 @@ export function updateCombat(c, ctx, dt) {
   if (c.flashT > 0) {
     c.flashT -= dt;
     if (c.flashT <= 0) c.flash.visible = false;
+  }
+  if (c.driveByGunT > 0) {
+    c.driveByGunT -= dt;
+    if (c.driveByGunT <= 0) c.driveByGun.visible = false;
   }
   for (const p of c.pickups) {
     p.mesh.rotation.y += dt * 1.5;

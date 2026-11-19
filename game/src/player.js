@@ -63,7 +63,9 @@ export function updatePlayer(p, dt, wish, run, camYaw, city) {
   if (p.recoil > 0) p.recoil = Math.max(0, p.recoil - dt * 1.6);
   const swing = p.moving ? Math.sin(p.phase) * 0.55 : 0;
   // Armed pose: both arms come up to a two-handed grip; the run swing still shows through
-  // the legs and, faintly, the arms. A recoil kick lifts the right arm for a beat.
+  // the legs and, faintly, the arms. A recoil kick lifts the right arm for a beat: armRx
+  // more negative pitches the muzzle UP (rotation.x -1.45 is level, -1.87 is up 17°),
+  // so the kick is subtracted — adding it pitched the barrel at the ground.
   const armed = p.armed ? 1 : 0;
   p.aim += (armed - p.aim) * Math.min(1, dt * 9);
   const aim = p.aim;
@@ -71,8 +73,8 @@ export function updatePlayer(p, dt, wish, run, camYaw, city) {
   const u = p.mesh.userData;
   u.legL.rotation.x = swing;
   u.legR.rotation.x = -swing;
-  u.armL.rotation.x = (-swing * 0.8) * (1 - aim) + aim * (-1.32 + kick * 0.35);
-  u.armR.rotation.x = (swing * 0.8) * (1 - aim) + aim * (-1.45 + kick);
+  u.armL.rotation.x = (-swing * 0.8) * (1 - aim) + aim * (-1.32 - kick * 0.35);
+  u.armR.rotation.x = (swing * 0.8) * (1 - aim) + aim * (-1.45 - kick);
   u.armL.rotation.z = aim * 0.16;
   // Both arms must converge on the weapon. This was written as `-aim * -0.16`, which
   // evaluates to +0.16 and swung the right arm the same way as the left, so the figure

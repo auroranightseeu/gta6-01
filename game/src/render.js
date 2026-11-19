@@ -1800,9 +1800,20 @@ export function createRenderer(canvas, city) {
       _lm.makeTranslation(0.37, 1.38, 0).multiply(_tmp.makeRotationX(ud.armRx || 0));
       if (ud.armRz) _lm.multiply(_tmp.makeRotationZ(ud.armRz));
       _lm.multiply(_tmp.makeTranslation(0, -0.62, 0.16));
+      // The gun's long axis is its local +Z, but the arm chain pitches the forearm
+      // forward (armRx ~ -1.45 when aiming), which maps +Z to straight UP: without a
+      // compensating rotation every gun stood up like an antenna. Roll the gun +90°
+      // about X so the barrel runs along the forearm, then slide it forward so the
+      // breech sits at the hand and the muzzle is (len - 0.07) m ahead of it.
+      const len = GUN_GEO[id].parameters.depth;
+      _lm.multiply(_tmp.makeRotationX(Math.PI / 2));
+      _lm.multiply(_tmp.makeTranslation(0, 0, len / 2 - 0.07));
       const k = used[id];
       guns[id].mesh.setMatrixAt(k, _out.copy(_pm).multiply(_lm));
-      _lm.multiply(_tmp.makeTranslation(0, -0.09, -0.02));
+      // The grip hangs below the barrel at the hand: back from the gun centre by the
+      // same forward slide, 0.09 down in the gun's frame (which is world-down once the
+      // barrel runs along the forearm).
+      _lm.multiply(_tmp.makeTranslation(0, -0.09, 0.09 - len / 2));
       guns[id].grip.setMatrixAt(k, _out.copy(_pm).multiply(_lm));
       used[id] += 1;
     }

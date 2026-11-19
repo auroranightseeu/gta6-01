@@ -203,21 +203,25 @@ function buildHeli(renderer) {
   renderer.scene.add(group);
 
   // The searchlight: an additive cone with its apex on the helicopter, aimed at Rio.
+  // Narrow and soft on purpose: at the old spread (2.2 + 0.15 * dist, ~5.8 m radius
+  // at the ground) the cone filled the chase frame as two flat pale polygons over
+  // the buildings and sky. A real searchlight is a beam, ~2 m across where it lands.
   const coneGeo = new THREE.ConeGeometry(1, 1, 14, 1, true);
   coneGeo.translate(0, -0.5, 0);
   const cone = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({
-    color: 0xfff3bd, transparent: true, opacity: 0.13, depthWrite: false,
+    color: 0xfff3bd, transparent: true, opacity: 0.08, depthWrite: false,
     side: THREE.DoubleSide, blending: THREE.AdditiveBlending, toneMapped: false,
   }));
   cone.visible = false;
   cone.frustumCulled = false;
   renderer.scene.add(cone);
 
-  // A soft pool of light on the street where the beam lands.
+  // A soft pool of light on the street where the beam lands. Sized to the beam, not
+  // the old flood: at 7.8 m radius it washed the whole road pale.
   const poolGeo = new THREE.CircleGeometry(1, 20);
   poolGeo.rotateX(-Math.PI / 2);
   const pool = new THREE.Mesh(poolGeo, new THREE.MeshBasicMaterial({
-    color: 0xffe9a8, transparent: true, opacity: 0.2, depthWrite: false,
+    color: 0xffe9a8, transparent: true, opacity: 0.14, depthWrite: false,
     blending: THREE.AdditiveBlending, toneMapped: false,
   }));
   pool.visible = false;
@@ -233,11 +237,12 @@ function buildHeli(renderer) {
   group.add(lens);
 
   // A faint translucent rotor disc: at hover altitude the blades alone vanish, the
-  // disc is what says "these are turning".
+  // disc is what says "these are turning". Kept thin (0.09): at 0.22 it read as a
+  // solid grey ellipse parked over the rotor instead of a blur.
   const discGeo = new THREE.CircleGeometry(4.6, 24);
   discGeo.rotateX(-Math.PI / 2);
   const disc = new THREE.Mesh(discGeo, new THREE.MeshBasicMaterial({
-    color: 0x2a3648, transparent: true, opacity: 0.22, depthWrite: false,
+    color: 0x2a3648, transparent: true, opacity: 0.09, depthWrite: false,
     side: THREE.DoubleSide,
   }));
   disc.position.set(0, 1.44, 0);
@@ -390,7 +395,17 @@ function roofHeight(ctx, x, z) {
   const city = ctx.city;
   if (!city || !city.buildings) return 0;
   let h = 0;
-  const pad = 9;
+  // The pad is the SOLID airframe's clearance from a facade: the hull is
+  // 0.85 m half-wide, so 3 m keeps metres of clearance on the body while the
+  // translucent rotor disc (4.6 m radius) may graze a facade corner at most.
+  // A wider pad counted tall towers BESIDE the road and held the heli at
+  // roof+9: in the seed=1 chase frame the station sits 4.3 m from a 25.5 m
+  // facade, so a 9 m pad (and a 5 m one) forced a 34.5 m hover, screen y -584,
+  // above the camera frustum. With a 3 m pad the station's closest approach
+  // (4.3 m from the face, rotor tip 0.1 m off the corner) stays at the base
+  // 10 m hover, and the aircraft still climbs to roof+9 over any roof it
+  // actually has to cross.
+  const pad = 3;
   for (const b of city.buildings) {
     if (b.h > h && x >= b.x - b.w / 2 - pad && x <= b.x + b.w / 2 + pad
       && z >= b.z - b.d / 2 - pad && z <= b.z + b.d / 2 + pad) h = b.h;
@@ -429,8 +444,8 @@ function updateHeli(police, ctx, dt) {
       h.x += (ctx.x - h.x) * 0.4 * dt;
       h.z += (ctx.z - h.z) * 0.4 * dt;
       const f = Math.max(0, 1 - h.t / HELI.leaveTime);
-      h.cone.material.opacity = 0.13 * f;
-      h.pool.material.opacity = 0.2 * f;
+      h.cone.material.opacity = 0.08 * f;
+      h.pool.material.opacity = 0.14 * f;
       h.rotor.rotation.y += dt * 26;
       h.tailRotor.rotation.x += dt * 40;
       if (h.beacons) h.beacons.material.color.setHex(0x581410);
@@ -476,8 +491,8 @@ function updateHeli(police, ctx, dt) {
     h.group.visible = true;
     h.cone.visible = true;
     h.pool.visible = true;
-    h.cone.material.opacity = 0.13;
-    h.pool.material.opacity = 0.2;
+    h.cone.material.opacity = 0.08;
+    h.pool.material.opacity = 0.14;
     h.group.position.set(h.x, h.y, h.z);
     return;
   }
@@ -492,8 +507,8 @@ function updateHeli(police, ctx, dt) {
     h.group.visible = true;
     h.cone.visible = true;
     h.pool.visible = true;
-    h.cone.material.opacity = 0.13;
-    h.pool.material.opacity = 0.2;
+    h.cone.material.opacity = 0.08;
+    h.pool.material.opacity = 0.14;
   }
 
   const tgt = heliTarget(h, ctx, dt);
@@ -552,10 +567,10 @@ function updateHeli(police, ctx, dt) {
   _dir.set(ax / dist, ay / dist, az / dist);
   h.cone.position.set(h.x, h.y - 1.0, h.z);
   h.cone.quaternion.setFromUnitVectors(_down, _dir);
-  const spread = 2.2 + dist * 0.15;
+  const spread = 1.0 + dist * 0.05;
   h.cone.scale.set(spread, dist, spread);
   h.pool.position.set(aimX, 0.07, aimZ);
-  const poolR = Math.max(2.5, spread * 1.35);
+  const poolR = Math.max(1.8, spread * 1.1);
   h.pool.scale.set(poolR, 1, poolR);
 }
 
@@ -657,7 +672,7 @@ export function updatePolice(police, ctx, dt) {
     car.mesh.userData.lightR.material.color.setHex(redOn ? 0xff2a2a : 0x5c1010);
     car.mesh.userData.lightB.material.color.setHex(redOn ? 0x101c5c : 0x2a6bff);
   }
-  // Hard separation backstop. The slots above spread the pursuit out in normal driving;
+  // Player-car separation. The slots above spread the pursuit out in normal driving;
   // this pass guarantees the invariant even when cars are shoved by a wall, spawn on top
   // of each other, or converge on a corner: no two cruisers closer than SEP.minGap. It
   // pushes each car half the shortfall along the line between them, then re-resolves
@@ -688,6 +703,42 @@ export function updatePolice(police, ctx, dt) {
       // Re-place the meshes the shove moved.
       a.mesh.position.set(a.x, 0, a.z);
       b.mesh.position.set(b.x, 0, b.z);
+    }
+  }
+  // A cruiser must never sit INSIDE Rio's car: the staged chase frame measured one at
+  // 2.27 m from the player car's centre (bodies overlap below ~4.2 m), its white roof
+  // poking out of the player car's bonnet. Only while driving: on foot the bust
+  // mechanic needs a cruiser to close to bustDist (3.4 m), so no shove there — a cop
+  // bumper-to-bumper with Rio on foot is the arrest, not a bug. The fix sends the
+  // offender back to its formation slot, ahead of Rio where the pursuit belongs:
+  // a plain radial shove can land it on the chase camera (5.2 m behind Rio is ~3 m
+  // from the lens, where it filled the frame), while every slot sits 10-23 m ahead,
+  // in frame and in formation. The same push also clears the camera wedge: a
+  // cruiser behind the rear bumper and within 12 m, near the centreline, sits
+  // between the lens and the car even without touching it — the staged frame caught
+  // the lead interceptor mid-overtake there, a roof and a light bar eating the
+  // corner. The whole move goes on the cruiser; Rio's car is never moved.
+  // Trade-off, stated plainly: a cruiser that would otherwise sit in that wedge
+  // visibly pops to its slot instead of driving through it; it was heading there.
+  if (ctx.driving) {
+    const fh = police.formHeading || 0;
+    const fx = Math.sin(fh);
+    const fz = Math.cos(fh);
+    for (const car of police.cars) {
+      const dx = car.x - ctx.x;
+      const dz = car.z - ctx.z;
+      const dist = Math.hypot(dx, dz);
+      const ahead = dx * fx + dz * fz;
+      const side = -dx * fz + dz * fx;
+      const overlapping = dist < SEP.minGap;
+      const inCameraWedge = ahead < -2.1 && Math.abs(side) < 6 && dist < 12;
+      if (!overlapping && !inCameraWedge) continue;
+      const slot = SEP.slots[car.slot ?? 0] || SEP.slots[0];
+      const p = slotPoint(slot, ctx.x, ctx.z, fh);
+      car.x = p.x;
+      car.z = p.z;
+      resolveCircle(car, 1.7, ctx.city);
+      car.mesh.position.set(car.x, 0, car.z);
     }
   }
   // Cool-off: no police car in sight for a while drops one star, then the timer

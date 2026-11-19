@@ -5,13 +5,20 @@
 import * as THREE from 'three';
 import { CITY } from './config.js';
 
-// Sixteen parcel spots, all on road intersections so a player on foot can always reach
-// them: the eight map corners/edges first, then eight inside the grid.
+// Sixteen parcel spots, one on the KERB CORNER of each of sixteen intersections
+// (7 m diagonally in from the crossing, toward the city centre), so a player on
+// foot can always reach them — and so a parcel never sits on a driving lane.
+// The old list put every spot dead on the intersection centreline: the chase
+// route up the -125 road ran straight over (-125,-25), and the 1 m parcel ended
+// up 3.3 m behind the player car, filling the chase camera as a huge cardboard
+// box "on" the car. A kerb corner is clear of every lane and of every building
+// (lots reach at most 8 m from a road centreline; the parcel's swept corner
+// reaches 7.7 m), and the pickup is still a short walk from the road.
 export const PARCEL_SPOTS = [
-  { x: -125, z: 75 }, { x: -75, z: 125 }, { x: 25, z: 125 }, { x: 125, z: 75 },
-  { x: 125, z: -75 }, { x: 75, z: -125 }, { x: -25, z: -125 }, { x: -125, z: -75 },
-  { x: -75, z: 75 }, { x: 75, z: 75 }, { x: 75, z: -25 }, { x: -25, z: 75 },
-  { x: 25, z: 25 }, { x: -25, z: -25 }, { x: 125, z: 25 }, { x: -125, z: -25 },
+  { x: -118, z: 68 }, { x: -68, z: 118 }, { x: 18, z: 118 }, { x: 118, z: 68 },
+  { x: 118, z: -68 }, { x: 68, z: -118 }, { x: -18, z: -118 }, { x: -118, z: -68 },
+  { x: -68, z: 68 }, { x: 68, z: 68 }, { x: 68, z: -18 }, { x: -18, z: 68 },
+  { x: 18, z: 18 }, { x: -18, z: -18 }, { x: 118, z: 18 }, { x: -118, z: -18 },
 ];
 
 // Fares: base cash plus distance, and a clock that is generous but real.

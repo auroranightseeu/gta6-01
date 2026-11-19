@@ -80,4 +80,4 @@ P / Esc pause · Enter start.
 - `serve.ts` — local static server: `node serve.ts`, then http://localhost:8080.
 
 Screenshots live in `screenshots/` (1-start.jpg cover, 2-play.jpg driving,
-3-foot.jpg on foot, 4-chase.jpg police chase). Built for the make.fun gta6-01 bounty.
+3-foot.jpg on foot, 4-chase.jpg mission-complete summary). Built for the make.fun gta6-01 bounty.

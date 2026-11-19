@@ -18,7 +18,7 @@ import {
   ACTION_CONFIRM, ACTION_ENTER, ACTION_FIRE, ACTION_MUTE, ACTION_PAUSE,
   ACTION_PUNCH, ACTION_RELOAD, ACTION_SWITCH, ACTION_TAXI, createInput,
 } from './input.js';
-import { createPlayer, updatePlayer } from './player.js';
+import { createPlayer, playerRecoil, setPlayerWeapon, updatePlayer } from './player.js';
 import * as vehicles from './vehicles.js';
 import { createTraffic, resetTraffic, updateTraffic } from './traffic.js';
 import { createPolice, clearPolice, updatePolice } from './police.js';
@@ -45,9 +45,13 @@ const {
 
 const MAX_FRAME = 0.25;
 const SPAWN = { x: -25, z: -18 };
-// Parcels when sidejobs.js did not load: v4's eight corners.
+// Parcels when sidejobs.js did not load: v4's eight corners, on the kerb corner of
+// each intersection like PARCEL_SPOTS (never the centreline — a centreline parcel
+// reads as a box on the car behind it) and as {x, z} objects, which is what
+// ensurePackages reads. The old array form gave spot.x === undefined.
 const FALLBACK_PARCELS = [
-  [-125, 75], [-75, 125], [25, 125], [125, 75], [125, -75], [75, -125], [-25, -125], [-125, -75],
+  { x: -118, z: 68 }, { x: -68, z: 118 }, { x: 18, z: 118 }, { x: 118, z: 68 },
+  { x: 118, z: -68 }, { x: 68, z: -118 }, { x: -18, z: -118 }, { x: -118, z: -68 },
 ];
 const WEAPON_IDS = ['pistol', 'smg', 'shotgun'];
 const SETTINGS_KEY = 'solmar.settings.v1';
@@ -57,6 +61,10 @@ const DEFAULT_SETTINGS = { volume: 0.6, shadows: true, mouseSensitivity: 1 };
 const LOW_FPS = 30;
 const CRITICAL_FPS = 14;
 const HIGH_FPS = 56;
+// W-I: the in-game controls hint dismisses itself this many game-seconds after it
+// appears (start, or entering/exiting a car), so the first-30-seconds guidance never
+// becomes permanent clutter. Game time, not wall clock: it survives slow frames.
+const HINT_SECONDS = 8;
 const params = new URLSearchParams(window.location.search);
 const shot = params.get('shot');
 // ?perf=adaptive (default) | off (never touch quality) | 0|1|2 (pin a quality level)
@@ -138,6 +146,10 @@ function buildGame() {
     // v5 hit feedback: a short damped camera shake and the flash timer the HUD's
     // #vignette element plays. Both are presentation only — no gameplay state.
     shake: 0, shakeAmp: 0,
+    // W-I: game-time deadline for the controls hint (0 = no hint showing that can
+    // expire), and the game-time clock the current mission started on, so the
+    // mission summary can report its elapsed time.
+    hintUntil: 0, missionStartedAt: 0,
     packages: [], packagePool: [], packageCount: 0, packageFound: new Set(), packageMessage: '',
     settings, quality: 2, qualityLabel: 'high',
     stats: { played: 0, crimes: 0, shots: 0, hits: 0 },
@@ -274,6 +286,24 @@ function resetGame(g, fresh) {
     car.mesh.position.set(s.x, 0, s.z);
     car.mesh.rotation.y = s.heading;
   });
+  // W-I: one car always waits near the spawn. The seeded parked spots land 25–92
+  // units from (-25,-18) on every seed 1–12 (median ~50: a 6 s run before Rio can
+  // drive at all), so the first 30 seconds were on foot by luck of the seed.
+  // cars[0] is re-parked on the east kerb of the -25 road, 21 units south of
+  // spawn — a 2–3 s run — clear of the -25 junction (its footprint ends 6 units
+  // south of the junction mouth). Deterministic: same car, same spot, every
+  // reset. Staged drive/chase shots reposition cars[0] themselves, so this never
+  // moves their hero car.
+  const nearCar = g.cars[0];
+  if (nearCar) {
+    nearCar.x = -19.6;
+    nearCar.z = -38;
+    nearCar.heading = Math.PI;
+    nearCar.speed = 0;
+    nearCar.parked = true;
+    nearCar.mesh.position.set(-19.6, 0, -38);
+    nearCar.mesh.rotation.y = Math.PI;
+  }
   resetTraffic(g.traffic, random);
   clearPolice(g.police);
   resetCombat(g.combat);
@@ -291,6 +321,7 @@ function resetGame(g, fresh) {
   g.shake = 0;
   g.shakeAmp = 0;
   g.time = 0;
+  g.missionStartedAt = 0;
   g.saveTimer = 0;
   g.speed = 0;
   const target = missionTarget(g.missions);
@@ -387,6 +418,8 @@ function applySave(g, save) {
   const target = missionTarget(g.missions);
   g.renderer.setBeacon(target ? target.x : MISSION_MARKER.x, target ? target.z : MISSION_MARKER.z, !!target);
   g.objective = missionText(g.missions);
+  // A loaded mission has no recorded start: its summary time counts from the load.
+  g.missionStartedAt = g.time;
 }
 
 // SAVE_KEY is read-only here: the v5 extras (stats, fares, sidejob totals, weapon
@@ -511,6 +544,17 @@ function ensureSummaryPanel() {
         '#m-summary .m-row b{color:#7ce8a4;font-variant-numeric:tabular-nums;}',
         '#m-summary .m-next{margin-top:6px;font-size:13px;color:#ffd98a;}',
         '#m-summary .m-hint{margin-top:7px;font-size:10.5px;letter-spacing:.08em;color:#7d8a99;}',
+        // W-I: the panel itself is pointer-events:none so it can never eat input
+        // or block play — but the CONTINUE button re-enables hit-testing for
+        // itself, so it is a real, clickable dismissal (in addition to any key,
+        // any click anywhere, and the auto-dismiss). It only ever receives a
+        // click when the pointer is not locked to the canvas.
+        '#m-summary .m-continue{pointer-events:auto;display:block;margin:11px auto 0;',
+        'padding:8px 24px;border:0;border-radius:7px;background:#ffc93c;color:#14181f;',
+        'font:700 13px/1.2 system-ui,-apple-system,"Segoe UI",sans-serif;letter-spacing:.08em;',
+        'text-shadow:none;cursor:pointer;}',
+        '#m-summary .m-continue:hover{background:#ffd76a;}',
+        '#m-summary .m-continue:focus-visible{outline:2px solid #fff;outline-offset:2px;}',
       ].join('');
       document.head.appendChild(style);
     }
@@ -520,9 +564,12 @@ function ensureSummaryPanel() {
       '<div class="m-kicker">MISSION COMPLETE</div>',
       '<div class="m-name"></div>',
       '<div class="m-row">Reward <b class="m-reward"></b></div>',
+      '<div class="m-row">Time <b class="m-time"></b></div>',
       '<div class="m-next"></div>',
+      '<button type="button" class="m-continue">CONTINUE ▸</button>',
       '<div class="m-hint">ANY KEY / CLICK TO DISMISS</div>',
     ].join('');
+    box.querySelector('.m-continue').addEventListener('click', () => dismissMissionSummary());
     document.body.appendChild(box);
     summaryEl = box;
   } catch {
@@ -531,11 +578,18 @@ function ensureSummaryPanel() {
   return summaryEl;
 }
 
-function showMissionSummary(g, name, reward, nextName, allDone) {
+/** Mission elapsed time as m:ss (0:07, 1:23). */
+function fmtElapsed(sec) {
+  const t = Math.max(0, Math.floor(sec || 0));
+  return `${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+}
+
+function showMissionSummary(g, name, reward, nextName, allDone, elapsedSec) {
   const el = ensureSummaryPanel();
   if (!el) return;
   el.querySelector('.m-name').textContent = name;
   el.querySelector('.m-reward').textContent = `+$${reward}`;
+  el.querySelector('.m-time').textContent = fmtElapsed(elapsedSec);
   el.querySelector('.m-next').textContent = allDone
     ? 'All jobs done — Solmar is yours.'
     : `Next up: ${nextName}`;
@@ -670,10 +724,14 @@ function addCrime(g, n, key, msg) {
 function completeMission(g, i) {
   const def = MISSIONS[i];
   const nextDef = MISSIONS[i + 1] || null;
+  // W-I: elapsed time on this mission, from when it began (or from the load, for
+  // a continued save) — the summary reports it, and the next mission's clock
+  // starts now.
+  const elapsed = Math.max(0, g.time - (g.missionStartedAt || 0));
   g.missions.done[i] = true;
   g.money += def.reward;
   showBanner(g, `MISSION COMPLETE — ${def.name} +$${def.reward}`);
-  showMissionSummary(g, def.name, def.reward, nextDef ? nextDef.name : '', !nextDef);
+  showMissionSummary(g, def.name, def.reward, nextDef ? nextDef.name : '', !nextDef, elapsed);
   sfx('jingle');
   persist(g);
   const next = i + 1;
@@ -686,6 +744,7 @@ function completeMission(g, i) {
     return;
   }
   const intro = beginMission(g.missions, next);
+  g.missionStartedAt = g.time;
   if (next === 2 || next === 3) g.wanted = Math.max(g.wanted, 2);
   const target = missionTarget(g.missions);
   g.renderer.setBeacon(target ? target.x : MISSION_MARKER.x, target ? target.z : MISSION_MARKER.z, !!target);
@@ -704,6 +763,7 @@ function enterExitCar(g) {
     g.player.vz = 0;
     g.player.heading = car.heading;
     g.hint = 'WASD move · Shift run · E enter car · P pause';
+    g.hintUntil = g.time + HINT_SECONDS;
     announce('On foot.');
     return;
   }
@@ -734,6 +794,7 @@ function enterExitCar(g) {
   car.parked = false;
   g.player.mesh.visible = false;
   g.hint = 'WASD drive · Space handbrake · E exit car · P pause';
+  g.hintUntil = g.time + HINT_SECONDS;
   announce(stolen ? 'Driving — stolen.' : 'Driving.');
 }
 
@@ -766,6 +827,9 @@ function doFire(g) {
   const result = firePistol(g.combat, {
     x: g.player.x, z: g.player.z, heading: g.player.heading,
     peds: g.traffic.peds, trafficCars: g.traffic.cars, sanctioned,
+    // Drive-by is detected from the car itself, not from position coincidence:
+    // pass the car Rio is sitting in so the muzzle is the driver's window.
+    driving: g.driving, car: g.driving,
     time: g.time,
     onCrime: (n, key, msg) => addCrime(g, n, key, msg),
     onHostileDown: () => {
@@ -776,6 +840,8 @@ function doFire(g) {
   const weaponId = combat.weaponInfo ? (combat.weaponInfo(g.combat) || {}).id : null;
   if (result === 'fired') {
     g.stats.shots += 1;
+    // The shooting arm kicks on every shot; without this the pose never changes.
+    playerRecoil(g.player);
     let rivalHpAfter = 0;
     for (const h of g.combat.hostiles) if (!h.down) rivalHpAfter += h.hp;
     let fleeingAfter = 0;
@@ -820,6 +886,24 @@ function respawnPlayer(g, reason) {
   g.wanted = 0;
   clearPolice(g.police);
   clearHostiles(g.combat);
+  // M4 "The Docks": dying mid-defend must not strand the mission. clearHostiles
+  // just emptied the rivals while the stage stays 'defend' and hostilesDown stays
+  // below 3, and nothing in play re-spawns them. The save-load path (applySave)
+  // re-spawns 3 fresh rivals for a saved defend stage, so respawn does the same:
+  // fresh rivals, count reset, mission completable again.
+  if (g.missions.index === 4 && g.missions.stage === 'defend') {
+    g.missions.hostilesDown = 0;
+    spawnHostiles(g.combat, -125, 25, 3);
+  }
+  // M2 "Cool Off": the mission completes when wanted hits 0, and this respawn
+  // just cleared wanted — getting caught would auto-complete the job. A respawn
+  // mid-M2 restarts the job instead, with the same heat it starts with
+  // (completeMission sets wanted 2 when M2 begins), so it must be lost again.
+  if (g.missions.index === 2) {
+    beginMission(g.missions, 2);
+    g.wanted = 2;
+    g.missionStartedAt = g.time;
+  }
   g.driving = null;
   g.player.mesh.visible = true;
   g.player.x = SAFEHOUSE.x;
@@ -846,6 +930,10 @@ function stepWorld(g, dt) {
     updateTraffic(g.traffic, dt, g.player);
     return;
   }
+  // W-I: the controls hint dismisses itself a few seconds into play. It is only
+  // ever armed by startGame / enterExitCar, and time is frozen while paused, so
+  // it can never vanish before the player has seen it.
+  if (g.hint && g.hintUntil && g.time > g.hintUntil) g.hint = '';
   g.stats.played += dt;
   g.camYaw -= mouse.dx * 0.0032;
   g.camPitch = Math.max(0.08, Math.min(1.2, g.camPitch - mouse.dy * 0.0025));
@@ -914,6 +1002,12 @@ function stepWorld(g, dt) {
       }
     }
   }
+  // Rio's visible weapon always matches the weapon combat is firing: the pose and
+  // the instanced gun are driven by player.armed, and nothing ever set it — so the
+  // gun on screen was always the pistol whatever the HUD said. Synced every frame
+  // so crate auto-switches and save loads are covered too. Empty while driving:
+  // the mesh is hidden in the cabin and the drive-by gun is combat's job.
+  setPlayerWeapon(g.player, g.driving ? '' : g.combat.weapon);
   // Traffic first (it also drives the signals), then the side jobs that read the
   // player's position — the order the contract fixes.
   updateTraffic(g.traffic, dt, g.player);
@@ -1059,6 +1153,24 @@ function runShot(name) {
   const scene = stageShot(game, name, resetGame);
   game.screen = scene.screen;
   game.hud.showScreen(scene.screen === SCREEN_TITLE ? 'title' : null);
+  // Staged on-foot frames never run the play loop, so updatePlayer never ran and
+  // Rio stood with his arms down and no gun — even in the shoot frame, where the
+  // flash and tracer were already live. Step the pose to convergence (aim lerps
+  // at dt*9, so ~40 steps) and bake one recoil kick in, so the frame shows the
+  // raised two-handed grip and the weapon for the staged weapon. Driving frames
+  // skip this: the player mesh is hidden in the cabin there.
+  if (!game.driving) {
+    // The staged weapon (SMG in the shoot frame) is the one to draw, not the
+    // player's default pistol.
+    setPlayerWeapon(game.player, game.combat.weapon);
+    for (let i = 0; i < 40; i += 1) {
+      updatePlayer(game.player, STEP, { f: 0, s: 0 }, false, game.camYaw, game.city);
+    }
+    if (name === 'shoot') {
+      playerRecoil(game.player);
+      updatePlayer(game.player, STEP, { f: 0, s: 0 }, false, game.camYaw, game.city);
+    }
+  }
   // The chase shot is already a real four-star pursuit with the air unit stepped onto
   // station by shots.js itself, so nothing further is staged here: stepping the police
   // again would only drift the interceptors off the frame the shot was built around.
@@ -1102,6 +1214,10 @@ function runGame() {
     sfx('click');
     resetGame(game, true);
     if (useSave && save) applySave(game, save);
+    // W-I: the controls hint is armed here, not in resetGame — the title screen
+    // idles on the same clock, and arming at reset would let it expire before
+    // play even starts.
+    game.hintUntil = game.time + HINT_SECONDS;
     game.screen = SCREEN_PLAY;
     game.hud.showScreen(null);
     game.input.lock();
@@ -1299,4 +1415,5 @@ window.__solmar = {
   hit: (scale = 1) => hitFeedback(game, scale),
   shake: () => game.shake,
   summaryVisible: () => !!(summaryEl && summaryEl.classList.contains('on')),
+  summaryText: () => (summaryEl ? summaryEl.textContent : ''),
 };

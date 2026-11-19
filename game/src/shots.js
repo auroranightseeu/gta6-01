@@ -6,7 +6,7 @@
 // a real four-star pursuit with the air unit actually overhead and in frame, not a busy
 // collage. Every scene runs the game's own systems rather than posing meshes.
 import { GETAWAY_MARKER, STEP } from './config.js';
-import { SCREEN_PLAY, SCREEN_TITLE } from './render.js';
+import { SCREEN_PLAY } from './render.js';
 import { updatePlayer } from './player.js';
 import { driveCar } from './vehicles.js';
 import { updateTraffic } from './traffic.js';
@@ -14,7 +14,6 @@ import { spawnPoliceCar, updatePolice } from './police.js';
 import { beginMission, missionText } from './missions.js';
 import { firePistol, refillAmmo, spawnHostiles, switchWeapon } from './combat.js';
 
-const START_SECONDS = 5;
 const DRIVE_SECONDS = 5.5;
 const FOOT_SECONDS = 6;
 const CHASE_SECONDS = 4.2; // let the interceptors close into the camera frame
@@ -38,11 +37,12 @@ export function stageShot(game, name, resetGame) {
   if (name === 'foot') return stageFoot(game);
   if (name === 'shoot') return stageShoot(game);
   if (name === 'chase') return stageChase(game);
-  // Start: the title screen over a living city, camera high over the centre.
-  game.camYaw = 0.7;
-  game.camPitch = 0.55;
-  for (let i = 0; i < START_SECONDS / STEP; i += 1) updateTraffic(game.traffic, STEP);
-  return { screen: SCREEN_TITLE };
+  // Start = the cover (W-H winner, 19 Nov): the police-chase frame, not the
+  // title screen. The title aerial (yaw 2.6 tried) stays dim behind its panel
+  // and reads as a wash at contact-sheet size; the chase shows the heli, the
+  // stars, the minimap and the objective all at once. The live title screen
+  // is untouched — this only stages the ?shot=start cover.
+  return stageChase(game);
 }
 
 /** Shared: put every traffic car on a cross street so none crosses the shot's lane. */
@@ -147,6 +147,13 @@ function stageChase(game) {
   game.objective = missionText(game.missions);
   game.renderer.setBeacon(GETAWAY_MARKER.x, GETAWAY_MARKER.z, true);
   const car = takeCar(game);
+  // W-H B-variant: level the chase camera (pitch 0.32 -> 0.24) so the air unit
+  // at its 10 m station sits in the upper third of the frame instead of
+  // grazing the top edge behind the rooftops. 0.15 put the heli dead-centre
+  // but the searchlight cone filled the sky and the near interceptor hid
+  // Rio's car; 0.24 keeps the heli big while the car stays readable.
+  // Drive staging keeps 0.32.
+  game.camPitch = 0.24;
   const cop1 = spawnPoliceCar(game.police, -128.4, -58, game.city);
   cop1.heading = Math.PI;
   cop1.mesh.rotation.y = Math.PI;
