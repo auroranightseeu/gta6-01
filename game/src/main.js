@@ -1,42 +1,116 @@
-// Boot and the one loop: Solmar, Rio Vega, Ana Deluca's five-job chain, wanted stars
-// and police, pistol combat, saves. The world advances in fixed 1/60 s steps; the
-// renderer paints what is there. Screens: title, play, paused, game over.
+// Boot and the one loop: Solmar, Rio Vega, Ana Deluca's job chain, wanted stars and
+// police (with the air unit), pistol/SMG/shotgun combat, side jobs, saves and settings.
+// The world advances in fixed 1/60 s steps; the renderer paints what is there.
+// Screens: title, play, paused (with settings + stats), game over.
 // ?seed=N fixes the city; ?shot=start|drive|foot|chase (with &seed=N) stages that
-// scene instead of running the loop, paints it twice and sets window.__shotReady
-// for a screenshot.
-import { CRIME, CRIME_COOLDOWN, MISSION_MARKER, RESPAWN_PENALTY, SAFEHOUSE, START_MONEY, STEP } from './config.js';
+// scene instead of running the loop, paints it twice and sets window.__shotReady.
+// ?perf=off|fixed|adaptive selects the frame-rate safeguard (default adaptive).
+//
+// PARALLEL SAFETY: this file is the integration point and every v5 module is being
+// written at the same time, so nothing here statically imports a symbol that did not
+// exist at v4. combat/vehicles/audio are namespace imports called defensively, and the
+// brand-new ./sidejobs.js is a guarded dynamic import with a null fallback.
+import { CRIME, CRIME_COOLDOWN, MISSION_MARKER, RESPAWN_PENALTY, SAFEHOUSE, SAVE_KEY, START_MONEY, STEP } from './config.js';
 import { createRandom } from './random.js';
 import { createCity, dist2 } from './world.js';
 import { createRenderer, SCREEN_OVER, SCREEN_PAUSED, SCREEN_PLAY, SCREEN_TITLE } from './render.js';
 import {
   ACTION_CONFIRM, ACTION_ENTER, ACTION_FIRE, ACTION_MUTE, ACTION_PAUSE,
-  ACTION_PUNCH, ACTION_RELOAD, createInput,
+  ACTION_PUNCH, ACTION_RELOAD, ACTION_SWITCH, ACTION_TAXI, createInput,
 } from './input.js';
 import { createPlayer, updatePlayer } from './player.js';
-import { createCar, driveCar, nearestCar } from './vehicles.js';
+import * as vehicles from './vehicles.js';
 import { createTraffic, resetTraffic, updateTraffic } from './traffic.js';
 import { createPolice, clearPolice, updatePolice } from './police.js';
 import {
   MISSIONS, allMissionsDone, beginMission, createMissions, currentMission,
   missionTarget, missionText,
 } from './missions.js';
-import { createCombat, clearHostiles, firePistol, punch, resetCombat, spawnHostiles, startReload, updateCombat } from './combat.js';
+import * as combat from './combat.js';
 import { readSave, writeSave } from './save.js';
 import { createHud } from './hud.js';
-import { ensureAudio, setEngine, setSiren, sfx, toggleMute } from './audio.js';
+import * as audio from './audio.js';
 import { stageShot } from './shots.js';
+
+// v4 names, aliased once so the call sites below stay plain functions.
+const {
+  createCar, driveCar, nearestCar,
+} = vehicles;
+const {
+  createCombat, clearHostiles, firePistol, punch, resetCombat, spawnHostiles, startReload, updateCombat,
+} = combat;
+const {
+  ensureAudio, setEngine, setSiren, sfx, toggleMute,
+} = audio;
 
 const MAX_FRAME = 0.25;
 const SPAWN = { x: -25, z: -18 };
-
+// Parcels when sidejobs.js did not load: v4's eight corners.
+const FALLBACK_PARCELS = [
+  [-125, 75], [-75, 125], [25, 125], [125, 75], [125, -75], [75, -125], [-25, -125], [-125, -75],
+];
+const WEAPON_IDS = ['pistol', 'smg', 'shotgun'];
+const SETTINGS_KEY = 'solmar.settings.v1';
+const DEFAULT_SETTINGS = { volume: 0.6, shadows: true, mouseSensitivity: 1 };
+// Frame-rate safeguard: below LOW_FPS the quality ladder steps down; the levels are
+// high (sun shadow map) -> medium (shadows off) -> low (shadows off, short draw distance).
+const LOW_FPS = 30;
+const CRITICAL_FPS = 14;
+const HIGH_FPS = 56;
 const params = new URLSearchParams(window.location.search);
 const shot = params.get('shot');
+// ?perf=adaptive (default) | off (never touch quality) | 0|1|2 (pin a quality level)
+const perfParam = params.get('perf');
+const perfMode = perfParam === 'off' || perfParam === 'adaptive' || perfParam === null
+  ? (perfParam || 'adaptive')
+  : 'pinned';
+const perfLevel = Number.parseInt(perfParam ?? '', 10);
 const seedParam = Number.parseInt(params.get('seed') ?? '', 10);
 const seed = Number.isInteger(seedParam) ? seedParam : Math.floor(Math.random() * 4294967296);
+
+// The one brand-new module: dynamic, guarded, and null if it is mid-write or absent.
+let side = null;
+try {
+  side = await import('./sidejobs.js');
+} catch {
+  side = null;
+}
 
 const canvas = document.getElementById('game');
 const status = document.getElementById('status');
 const game = buildGame();
+
+function loadSettings() {
+  const out = { ...DEFAULT_SETTINGS };
+  try {
+    const raw = window.localStorage.getItem(SETTINGS_KEY);
+    if (raw) {
+      const saved = JSON.parse(raw);
+      if (saved && typeof saved === 'object') {
+        if (Number.isFinite(saved.volume)) out.volume = Math.max(0, Math.min(1, saved.volume));
+        if (typeof saved.shadows === 'boolean') out.shadows = saved.shadows;
+        if (Number.isFinite(saved.mouseSensitivity)) {
+          out.mouseSensitivity = Math.max(0.2, Math.min(3, saved.mouseSensitivity));
+        }
+      }
+    }
+  } catch {
+    // Storage off or a broken blob: the defaults are the v4 feel.
+  }
+  return out;
+}
+
+function saveSettings(settings) {
+  try {
+    window.localStorage.setItem(SETTINGS_KEY, JSON.stringify({
+      volume: settings.volume,
+      shadows: settings.shadows,
+      mouseSensitivity: settings.mouseSensitivity,
+    }));
+  } catch {
+    // Private window: the settings last this visit only.
+  }
+}
 
 function buildGame() {
   const random = createRandom(seed);
@@ -52,18 +126,123 @@ function buildGame() {
   });
   const traffic = createTraffic(city, random, renderer);
   const police = createPolice(renderer);
-  const combat = createCombat(renderer);
+  const fight = createCombat(renderer);
   const missions = createMissions();
+  const settings = loadSettings();
   const g = {
-    city, renderer, input, hud, player, cars, traffic, police, combat, missions,
+    city, renderer, input, hud, player, cars, traffic, police, combat: fight, missions,
     screen: SCREEN_TITLE, driving: null, money: START_MONEY, health: 100,
     wanted: 0, camYaw: 0, camPitch: 0.35,
     objective: '', hint: '', time: 0, saveTimer: 0, speed: 0,
     crimeAt: {}, banner: '', bannerUntil: 0, busted: false, stolen: [],
-    packages: [], packageCount: 0, packageFound: new Set(), packageMessage: '',
+    // v5 hit feedback: a short damped camera shake and the flash timer the HUD's
+    // #vignette element plays. Both are presentation only — no gameplay state.
+    shake: 0, shakeAmp: 0,
+    packages: [], packagePool: [], packageCount: 0, packageFound: new Set(), packageMessage: '',
+    settings, quality: 2, qualityLabel: 'high',
+    stats: { played: 0, crimes: 0, shots: 0, hits: 0 },
+    sidejobs: null,
+    // Reused HUD buffers: hudState() runs every frame and must not allocate.
+    hudCars: [], hudPolice: [], hudPickups: [], hudWeapons: [], hudWeaponPool: [],
+    hudStats: { played: 0, crimes: 0, fares: 0, parcels: 0, shots: 0, hits: 0 },
+    hudTaxi: { active: false, label: '' },
   };
+  // Side jobs: optional module, optional state. Null means the game simply has none.
+  g.sidejobs = side && typeof side.createSidejobs === 'function' ? side.createSidejobs(renderer) : null;
+  g.input.setSensitivity(settings.mouseSensitivity);
   resetGame(g, false);
+  applySettings(g, settings, true);
   return g;
+}
+
+/** Shrink (or restore) the sun shadow map without disabling shadows. This was the
+ *  measured alternative to the ladder below: it keeps the look but reallocates the
+ *  depth target, which costs draws, tris and fill all at once. Only reachable through
+ *  `?perf=sm` so the experiment stays reproducible. */
+function setShadowMapSize(g, size) {
+  const sun = g.renderer.sun;
+  if (!sun || !sun.shadow) return;
+  const n = Math.max(256, Math.min(2048, size | 0));
+  if (sun.shadow.mapSize.x === n) return;
+  sun.shadow.mapSize.set(n, n);
+  if (sun.shadow.map) {
+    sun.shadow.map.dispose();
+    sun.shadow.map = null;
+  }
+}
+
+/** 0 = low, 1 = medium, 2 = high. Never touches gameplay state, only presentation.
+ *  MEASURED (see report): the shadow map is ~72% of the draw calls and ~53% of the
+ *  triangles, so it is the only lever that pays. Level 0 additionally pulls the fog
+ *  and camera far plane in as a last resort; that step measured no gain over level 1
+ *  (same draws, same tris), so it is only reached when the frame rate is desperate. */
+function setQuality(g, level) {
+  const lv = Math.max(0, Math.min(2, level | 0));
+  g.quality = lv;
+  const shadows = lv >= 2 && g.settings.shadows !== false;
+  const sun = g.renderer.sun;
+  if (sun) {
+    sun.castShadow = shadows;
+    if (!shadows && sun.shadow && sun.shadow.map) {
+      sun.shadow.map.dispose();
+      sun.shadow.map = null;
+    }
+  }
+  // The WebGLRenderer lives inside render.js; if a future renderer exposes a
+  // resolution knob use it, otherwise the shadows/fog ladder is the whole story.
+  if (typeof g.renderer.setQuality === 'function') g.renderer.setQuality(lv);
+  const camera = g.renderer.camera;
+  if (camera) {
+    const far = lv === 0 ? 900 : 1200;
+    if (camera.far !== far) {
+      camera.far = far;
+      camera.updateProjectionMatrix();
+    }
+  }
+  const fog = g.renderer.scene.fog;
+  if (fog) fog.far = lv === 0 ? 420 : 460;
+  g.qualityLabel = lv >= 2 ? 'high' : lv === 1 ? 'medium' : 'low';
+  if (g.hud.showSettings) g.hud.showSettings({ ...g.settings, qualityLabel: g.qualityLabel });
+}
+
+/** Apply a settings object live: audio, mouse, and the quality ladder. */
+function applySettings(g, settings, initial) {
+  g.settings = settings;
+  g.input.setSensitivity(settings.mouseSensitivity);
+  if (audio.audioSettings) audio.audioSettings({ volume: settings.volume, music: true });
+  if (!initial) {
+    // A user who turns shadows off keeps them off: the watchdog may step further
+    // down but never back up past the user's ceiling.
+    if (!settings.shadows) setQuality(g, Math.min(g.quality, 1));
+    else setQuality(g, 2);
+  }
+  if (g.hud.showSettings) g.hud.showSettings({ ...settings, qualityLabel: g.qualityLabel });
+}
+
+function ensurePackages(g) {
+  // Pool the parcel meshes: a reset reuses them instead of building 16 new groups
+  // (16 geometries and materials per reset in v4). `renderer.makePackage` is the
+  // only allocation, and only the first time a spot appears.
+  const spots = side && Array.isArray(side.PARCEL_SPOTS) && side.PARCEL_SPOTS.length
+    ? side.PARCEL_SPOTS
+    : FALLBACK_PARCELS;
+  if (g.packages.length) {
+    for (const item of g.packages) {
+      if (item.mesh && item.mesh.parent) item.mesh.parent.remove(item.mesh);
+    }
+  }
+  g.packages = spots.map((spot, i) => {
+    let mesh = g.packagePool[i];
+    if (!mesh) {
+      mesh = g.renderer.makePackage();
+      g.packagePool[i] = mesh;
+    }
+    mesh.position.set(spot.x, 0.55, spot.z);
+    mesh.rotation.y = 0;
+    mesh.visible = true;
+    g.renderer.scene.add(mesh);
+    return { x: spot.x, z: spot.z, mesh, active: true, index: i };
+  });
 }
 
 function resetGame(g, fresh) {
@@ -109,42 +288,52 @@ function resetGame(g, fresh) {
   g.busted = false;
   g.camYaw = 0;
   g.camPitch = 0.35;
+  g.shake = 0;
+  g.shakeAmp = 0;
   g.time = 0;
   g.saveTimer = 0;
   g.speed = 0;
   const target = missionTarget(g.missions);
   g.renderer.setBeacon(target ? target.x : MISSION_MARKER.x, target ? target.z : MISSION_MARKER.z, !!target);
-  for (const item of g.packages) g.renderer.scene.remove(item.mesh);
+  ensurePackages(g);
   g.packageCount = 0;
   g.packageFound = new Set();
-  g.packages = [
-    [-125, 75], [-75, 125], [25, 125], [125, 75], [125, -75], [75, -125], [-25, -125], [-125, -75],
-  ].map(([x, z], i) => {
-    const mesh = g.renderer.makePackage();
-    mesh.position.set(x, 0.55, z);
-    g.renderer.scene.add(mesh);
-    return { x, z, mesh, active: true, index: i };
-  });
+  if (g.sidejobs && side && side.resetSidejobs) side.resetSidejobs(g.sidejobs);
   g.objective = missionText(g.missions);
   g.hint = 'WASD move · Shift run · E enter car · P pause';
 }
 
 function saveState(g) {
-  return {
+  const state = {
     money: g.money, health: g.health, x: g.player.x, z: g.player.z,
     missionIndex: g.missions.index, missionsDone: [...g.missions.done],
     missionStage: g.missions.stage, ammoMag: g.combat.mag, ammoReserve: g.combat.reserve,
     packageCount: g.packageCount,
     packageFound: [...g.packageFound],
+    // v5 extras. save.js (W-D) persists any key it is given; an older save.js
+    // simply ignores them and the game is exactly v4.
+    parcelsFound: [...g.packageFound],
+    stats: { played: g.stats.played, crimes: g.stats.crimes, shots: g.stats.shots, hits: g.stats.hits },
+    fares: g.sidejobs ? g.sidejobs.fares : 0,
+    sideJobs: g.sidejobs ? {
+      fares: g.sidejobs.fares, failed: g.sidejobs.failed,
+      earned: g.sidejobs.earned, offered: g.sidejobs.offered,
+    } : null,
+    weapons: weaponSlots(g).map((w) => ({ id: w.id, mag: w.mag, reserve: w.reserve })),
+    weaponId: (combat.weaponInfo && combat.weaponInfo(g.combat) || {}).id || g.combat.weapon || 'pistol',
   };
+  return state;
 }
 
 function applySave(g, save) {
-  g.money = save.money;
-  g.health = save.health;
-  g.player.x = save.x;
-  g.player.z = save.z;
-  g.player.mesh.position.set(save.x, 0, save.z);
+  if (!save) return;
+  g.money = Number.isFinite(save.money) ? save.money : g.money;
+  g.health = Number.isFinite(save.health) ? save.health : g.health;
+  if (Number.isFinite(save.x) && Number.isFinite(save.z)) {
+    g.player.x = save.x;
+    g.player.z = save.z;
+    g.player.mesh.position.set(save.x, 0, save.z);
+  }
   g.missions.index = Math.min(save.missionIndex || 0, MISSIONS.length);
   g.missions.done = (save.missionsDone || Array(MISSIONS.length).fill(false)).slice(0, MISSIONS.length);
   while (g.missions.done.length < MISSIONS.length) g.missions.done.push(false);
@@ -154,12 +343,42 @@ function applySave(g, save) {
   g.missions.timer = def && def.timed ? def.timed : 0;
   g.combat.mag = save.ammoMag ?? 12;
   g.combat.reserve = save.ammoReserve ?? 24;
-  g.packageFound = new Set((save.packageFound || []).filter((i) => Number.isInteger(i) && i >= 0 && i < g.packages.length));
+  // v5 weapon state, only when combat.js actually keeps per-weapon magazines.
+  if (Array.isArray(save.weapons) && g.combat.weapons) {
+    for (const w of save.weapons) {
+      if (!w || !w.id) continue;
+      const slot = g.combat.weapons[w.id];
+      if (slot) {
+        if (Number.isFinite(w.mag)) slot.mag = w.mag;
+        if (Number.isFinite(w.reserve)) slot.reserve = w.reserve;
+      }
+    }
+    if (combat.switchWeapon) combat.switchWeapon(g.combat, save.weaponId || 'pistol');
+  }
+  const found = Array.isArray(save.packageFound) ? save.packageFound
+    : Array.isArray(save.parcelsFound) ? save.parcelsFound : [];
+  g.packageFound = new Set(found.filter((i) => Number.isInteger(i) && i >= 0 && i < g.packages.length));
   g.packageCount = g.packageFound.size;
   g.packages.forEach((item) => {
     item.active = !g.packageFound.has(item.index);
     item.mesh.visible = item.active;
   });
+  if (save.stats && typeof save.stats === 'object') {
+    if (Number.isFinite(save.stats.played)) g.stats.played = save.stats.played;
+    if (Number.isFinite(save.stats.crimes)) g.stats.crimes = save.stats.crimes;
+    if (Number.isFinite(save.stats.shots)) g.stats.shots = save.stats.shots;
+    if (Number.isFinite(save.stats.hits)) g.stats.hits = save.stats.hits;
+  }
+  if (g.sidejobs) {
+    const sj = save.sideJobs && typeof save.sideJobs === 'object' ? save.sideJobs : null;
+    const fares = sj && Number.isFinite(sj.fares) ? sj.fares : Number.isFinite(save.fares) ? save.fares : 0;
+    g.sidejobs.fares = fares;
+    if (sj) {
+      if (Number.isFinite(sj.failed)) g.sidejobs.failed = sj.failed;
+      if (Number.isFinite(sj.earned)) g.sidejobs.earned = sj.earned;
+      if (Number.isFinite(sj.offered)) g.sidejobs.offered = sj.offered;
+    }
+  }
   // Chase missions resume hot; a saved defend stage resumes with fresh rivals.
   if (g.missions.index === 2 || g.missions.index === 3) g.wanted = 2;
   if (g.missions.index === 4 && g.missions.stage === 'defend') {
@@ -168,6 +387,33 @@ function applySave(g, save) {
   const target = missionTarget(g.missions);
   g.renderer.setBeacon(target ? target.x : MISSION_MARKER.x, target ? target.z : MISSION_MARKER.z, !!target);
   g.objective = missionText(g.missions);
+}
+
+// SAVE_KEY is read-only here: the v5 extras (stats, fares, sidejob totals, weapon
+// magazines) are merged into the same record after writeSave(), because save.js
+// (W-D) still writes only the v4 key set. Merging, not rewriting, means the moment
+// W-D lands the v5 save these writes become no-ops on identical values. readSave()
+// already returns the whole parsed record, so loading needs no sidecar at all.
+const SAVE_EXTRA_KEYS = ['parcelsFound', 'stats', 'fares', 'sideJobs', 'weapons', 'weaponId'];
+
+function persist(g) {
+  const state = saveState(g);
+  writeSave(state);
+  try {
+    const raw = window.localStorage.getItem(SAVE_KEY);
+    if (!raw) return;
+    const record = JSON.parse(raw);
+    let changed = false;
+    for (const key of SAVE_EXTRA_KEYS) {
+      if (state[key] === undefined || state[key] === null) continue;
+      if (JSON.stringify(record[key]) === JSON.stringify(state[key])) continue;
+      record[key] = state[key];
+      changed = true;
+    }
+    if (changed) window.localStorage.setItem(SAVE_KEY, JSON.stringify(record));
+  } catch {
+    // Storage off (private window): the save lasts this visit, as before.
+  }
 }
 
 function announce(message) {
@@ -179,7 +425,212 @@ function showBanner(g, text) {
   g.bannerUntil = g.time + 3.5;
 }
 
+// --- v5 hit feedback ---------------------------------------------------------------
+// On any damage, a short damped camera shake plus a red edge flash. The HUD already
+// owns a damage vignette (hud.js, driven by state.damage), but that wash fades with
+// health, so it is invisible at full health — exactly when the first shot lands. The
+// flash is therefore a transient layer that is only alive for ~0.3 s and never reads
+// health; it adds no second damage number and nothing gameplay-facing.
+const SHAKE_TIME = 0.26;
+const SHAKE_AMP = 0.5;
+let flashEl = null;
+let flashStyle = false;
+
+function ensureHitFlash() {
+  if (flashEl) return flashEl;
+  try {
+    if (!flashStyle) {
+      flashStyle = true;
+      const style = document.createElement('style');
+      style.textContent = [
+        '#hitflash{position:fixed;inset:0;pointer-events:none;opacity:0;',
+        'background:radial-gradient(ellipse at center,rgba(255,60,40,0) 38%,',
+        'rgba(214,24,18,.34) 74%,rgba(150,0,0,.78) 100%);}',
+        '#hitflash.on{animation:hitflash .3s ease-out 1;}',
+        '@keyframes hitflash{0%{opacity:1}45%{opacity:.62}100%{opacity:0}}',
+      ].join('');
+      document.head.appendChild(style);
+    }
+    flashEl = document.createElement('div');
+    flashEl.id = 'hitflash';
+    // Inserted BELOW the HUD in paint order so the flash washes the world, never the
+    // money/health panels — the same layering the HUD's own vignette uses.
+    const hud = document.getElementById('hud');
+    if (hud && hud.parentNode === document.body) document.body.insertBefore(flashEl, hud);
+    else document.body.appendChild(flashEl);
+  } catch {
+    flashEl = null; // no DOM: the shake still plays, the flash just never shows
+  }
+  return flashEl;
+}
+
+/** Brief shake + red flash. `scale` 0..1 keeps a light scrape lighter than a hit. */
+function hitFeedback(g, scale = 1) {
+  const s = Math.max(0.15, Math.min(1, scale));
+  g.shake = SHAKE_TIME * (0.6 + s * 0.4);
+  g.shakeAmp = SHAKE_AMP * s;
+  const el = ensureHitFlash();
+  if (el) {
+    // Restart the CSS animation: the class has to come off for one frame.
+    el.classList.remove('on');
+    void el.offsetWidth;
+    el.classList.add('on');
+  }
+  if (typeof navigator !== 'undefined' && navigator.vibrate) {
+    try { navigator.vibrate(Math.round(18 * s)); } catch { /* not available */ }
+  }
+}
+
+// --- mission summary ---------------------------------------------------------------
+// A small, non-blocking panel after each completed job: what was just done, what it
+// paid, and what comes next. Auto-dismisses, and any key or click dismisses it early.
+// It is pointer-events:none, so it can never eat input or block play.
+let summaryEl = null;
+let summaryHideAt = 0;
+let summaryStyle = false;
+const SUMMARY_MS = 5000;
+
+function ensureSummaryPanel() {
+  if (summaryEl) return summaryEl;
+  try {
+    if (!summaryStyle) {
+      summaryStyle = true;
+      const style = document.createElement('style');
+      style.textContent = [
+        '#m-summary{position:fixed;top:112px;left:50%;transform:translate(-50%,-8px);',
+        'min-width:280px;max-width:80vw;padding:14px 22px;border-radius:10px;',
+        'background:rgba(8,14,22,.82);border:1px solid rgba(255,201,60,.45);',
+        'border-left:4px solid #ffc93c;color:#eef1f5;text-align:left;',
+        'font:600 14px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;',
+        'text-shadow:0 1px 3px rgba(0,0,0,.75);pointer-events:none;z-index:4;',
+        'opacity:0;transition:opacity .18s ease,transform .18s ease;}',
+        '#m-summary.on{opacity:1;transform:translate(-50%,0);}',
+        '#m-summary .m-kicker{font-size:11px;letter-spacing:.18em;color:#ffc93c;}',
+        '#m-summary .m-name{font-size:19px;font-weight:700;margin:1px 0 6px;}',
+        '#m-summary .m-row{font-size:13px;color:#b8c4d0;}',
+        '#m-summary .m-row b{color:#7ce8a4;font-variant-numeric:tabular-nums;}',
+        '#m-summary .m-next{margin-top:6px;font-size:13px;color:#ffd98a;}',
+        '#m-summary .m-hint{margin-top:7px;font-size:10.5px;letter-spacing:.08em;color:#7d8a99;}',
+      ].join('');
+      document.head.appendChild(style);
+    }
+    const box = document.createElement('div');
+    box.id = 'm-summary';
+    box.innerHTML = [
+      '<div class="m-kicker">MISSION COMPLETE</div>',
+      '<div class="m-name"></div>',
+      '<div class="m-row">Reward <b class="m-reward"></b></div>',
+      '<div class="m-next"></div>',
+      '<div class="m-hint">ANY KEY / CLICK TO DISMISS</div>',
+    ].join('');
+    document.body.appendChild(box);
+    summaryEl = box;
+  } catch {
+    summaryEl = null;
+  }
+  return summaryEl;
+}
+
+function showMissionSummary(g, name, reward, nextName, allDone) {
+  const el = ensureSummaryPanel();
+  if (!el) return;
+  el.querySelector('.m-name').textContent = name;
+  el.querySelector('.m-reward').textContent = `+$${reward}`;
+  el.querySelector('.m-next').textContent = allDone
+    ? 'All jobs done — Solmar is yours.'
+    : `Next up: ${nextName}`;
+  el.classList.add('on');
+  // Wall-clock deadline so it dismisses on its own even while paused.
+  summaryHideAt = performance.now() + SUMMARY_MS;
+}
+
+function dismissMissionSummary() {
+  summaryHideAt = 0;
+  if (!summaryEl) return;
+  summaryEl.classList.remove('on');
+}
+
+/** Auto-dismiss tick: called once per frame, cheap when nothing is showing. */
+function summaryTick() {
+  if (!summaryHideAt) return;
+  if (performance.now() >= summaryHideAt) dismissMissionSummary();
+}
+
+/** Weapon chips for the HUD: per-weapon magazines when combat.js has them, else the
+ *  single v4 pistol line. Both the array AND the slot objects are pooled on `g` so the
+ *  per-frame HUD build allocates nothing. */
+function weaponSlots(g) {
+  const c = g.combat;
+  const info = combat.weaponInfo ? combat.weaponInfo(c) : null;
+  const current = (info && info.id) || c.weapon || 'pistol';
+  const out = g.hudWeapons;
+  const pool = g.hudWeaponPool;
+  out.length = 0;
+  if (c.weapons && typeof c.weapons === 'object') {
+    for (const id of WEAPON_IDS) {
+      const w = c.weapons[id];
+      if (!w) continue;
+      let slot = pool[out.length];
+      if (!slot) {
+        slot = { id, name: '', mag: 0, reserve: 0, active: false };
+        pool[out.length] = slot;
+      }
+      slot.id = id;
+      slot.name = w.name || (info && info.id === id ? info.name : id);
+      slot.mag = w.mag ?? 0;
+      slot.reserve = w.reserve ?? 0;
+      slot.active = id === current;
+      out.push(slot);
+    }
+  }
+  if (!out.length) {
+    let slot = pool[0];
+    if (!slot) {
+      slot = { id: '', name: '', mag: 0, reserve: 0, active: true };
+      pool[0] = slot;
+    }
+    slot.id = current;
+    slot.name = (info && info.name) || 'Pistol';
+    slot.mag = info ? info.mag : c.mag ?? 0;
+    slot.reserve = info ? info.reserve : c.reserve ?? 0;
+    slot.active = true;
+    out.push(slot);
+  }
+  return out;
+}
+
 function hudState(g) {
+  const cars = g.hudCars;
+  cars.length = 0;
+  for (const car of g.cars) cars.push(car);
+  for (const car of g.traffic.cars) cars.push(car);
+  const cops = g.hudPolice;
+  cops.length = 0;
+  for (const car of g.police.cars) cops.push(car);
+  const pickups = g.hudPickups;
+  pickups.length = 0;
+  for (const p of g.combat.pickups) pickups.push(p);
+  const heli = g.police.heli;
+  const heliOn = !!(heli && heli.active);
+  // Damage on the vignette: the car Rio is in, or Rio himself, whichever is worse.
+  let damage = 100 - g.health;
+  if (g.driving) {
+    const health = vehicles.carHealth ? vehicles.carHealth(g.driving) : 100;
+    damage = Math.max(damage, 100 - (Number.isFinite(health) ? health : 100));
+  }
+  const taxiInfo = g.sidejobs && side && side.sidejobsHud ? side.sidejobsHud(g.sidejobs) : null;
+  // The stats and taxi sub-objects are pooled too: hudState() runs every frame, so a
+  // fresh literal here would be two allocations per frame, forever.
+  const stats = g.hudStats;
+  stats.played = g.stats.played;
+  stats.crimes = g.stats.crimes;
+  stats.fares = g.sidejobs ? g.sidejobs.fares : 0;
+  stats.parcels = g.packageCount;
+  stats.shots = g.stats.shots;
+  stats.hits = g.stats.hits;
+  const taxi = g.hudTaxi;
+  taxi.active = taxiInfo ? !!taxiInfo.taxiActive : false;
+  taxi.label = (taxiInfo && taxiInfo.taxiLabel) || '';
   return {
     money: g.money, health: g.health, wanted: g.wanted,
     speed: g.speed, driving: g.driving !== null,
@@ -187,11 +638,21 @@ function hudState(g) {
     banner: g.time < g.bannerUntil ? g.banner : '',
     ammoMag: g.combat.mag, ammoReserve: g.combat.reserve,
     reloading: g.combat.reloading > 0,
-    player: g.player, cars: [...g.cars, ...g.traffic.cars],
-    police: g.police.cars, pickups: g.combat.pickups,
+    player: g.player, cars, police: cops, pickups,
     missionTarget: missionTarget(g.missions),
     packages: g.packages,
     packageCount: g.packageCount,
+    packageTotal: g.packages.length,
+    weapons: weaponSlots(g),
+    // The reticle only makes sense when a shot would actually go down the screen centre,
+    // which is exactly the on-foot case: the reticle hides in a car (drive-by aims at the
+    // nearest target, not at centre) and on the title/busted screens.
+    armed: !g.driving && g.screen === SCREEN_PLAY,
+    taxi,
+    damage: Math.max(0, Math.min(100, damage)),
+    heli: heliOn,
+    heliOn,
+    stats,
   };
 }
 
@@ -202,16 +663,19 @@ function addCrime(g, n, key, msg) {
   g.crimeAt[key] = g.time;
   g.wanted = Math.min(5, g.wanted + n);
   g.police.hiddenTimer = 0;
+  g.stats.crimes += 1;
   if (msg) announce(msg);
 }
 
 function completeMission(g, i) {
   const def = MISSIONS[i];
+  const nextDef = MISSIONS[i + 1] || null;
   g.missions.done[i] = true;
   g.money += def.reward;
   showBanner(g, `MISSION COMPLETE — ${def.name} +$${def.reward}`);
+  showMissionSummary(g, def.name, def.reward, nextDef ? nextDef.name : '', !nextDef);
   sfx('jingle');
-  writeSave(saveState(g));
+  persist(g);
   const next = i + 1;
   if (next >= MISSIONS.length) {
     g.missions.index = next;
@@ -273,20 +737,52 @@ function enterExitCar(g) {
   announce(stolen ? 'Driving — stolen.' : 'Driving.');
 }
 
+/** Weapon switching: Digit1..3 pick a slot, Q cycles. Both guarded because combat.js
+ *  may not have the v5 API yet. */
+function switchWeaponSlot(g, which) {
+  if (!combat.switchWeapon && !combat.cycleWeapon) return;
+  if (which === 'cycle') {
+    if (!combat.cycleWeapon) return;
+    combat.cycleWeapon(g.combat);
+  } else if (combat.switchWeapon) {
+    combat.switchWeapon(g.combat, which);
+  }
+  const info = combat.weaponInfo ? combat.weaponInfo(g.combat) : null;
+  if (info) {
+    sfx('click');
+    announce(`${info.name || info.id} — ${info.mag}/${info.reserve}`);
+  }
+}
+
 function doFire(g) {
   if (g.screen !== SCREEN_PLAY) return;
   const sanctioned = g.missions.index === 4 && g.missions.stage === 'defend';
+  // Accuracy is measured from observable state: rival hit points before and after,
+  // and whether any bystander started fleeing (that is what a ped hit does).
+  let rivalHp = 0;
+  for (const h of g.combat.hostiles) if (!h.down) rivalHp += h.hp;
+  let fleeing = 0;
+  for (const p of g.traffic.peds) if (p.flee > 0) fleeing += 1;
   const result = firePistol(g.combat, {
     x: g.player.x, z: g.player.z, heading: g.player.heading,
     peds: g.traffic.peds, trafficCars: g.traffic.cars, sanctioned,
+    time: g.time,
     onCrime: (n, key, msg) => addCrime(g, n, key, msg),
     onHostileDown: () => {
       g.missions.hostilesDown += 1;
       announce(`Rival down (${g.missions.hostilesDown}/3).`);
     },
   });
-  if (result === 'fired') sfx('gunshot');
-  else if (result === 'empty') announce('Out of ammo — find a green crate or press R.');
+  const weaponId = combat.weaponInfo ? (combat.weaponInfo(g.combat) || {}).id : null;
+  if (result === 'fired') {
+    g.stats.shots += 1;
+    let rivalHpAfter = 0;
+    for (const h of g.combat.hostiles) if (!h.down) rivalHpAfter += h.hp;
+    let fleeingAfter = 0;
+    for (const p of g.traffic.peds) if (p.flee > 0) fleeingAfter += 1;
+    if (rivalHpAfter < rivalHp || fleeingAfter > fleeing) g.stats.hits += 1;
+    sfx(weaponId && weaponId !== 'pistol' ? weaponId : 'gunshot');
+  } else if (result === 'empty') announce('Out of ammo — find a green crate or press R.');
   else if (result === 'reloading') sfx('reload');
 }
 
@@ -301,6 +797,18 @@ function doPunch(g) {
     },
   });
   if (result === 'hit') sfx('punch');
+}
+
+/** The taxi key: no-op (with the module's own message) if a fare is already running. */
+function callTaxi(g) {
+  if (!g.sidejobs || !side || !side.startTaxi) return;
+  const started = side.startTaxi(g.sidejobs, g.player.x, g.player.z);
+  if (started) {
+    sfx('taxi');
+    announce('Fare posted — the passenger is waiting at the amber kerb marker.');
+  } else if (g.sidejobs.taxi) {
+    announce(g.sidejobs.message || 'A fare is already running.');
+  }
 }
 
 /** Busted or wasted: respawn at the safehouse, a small cash penalty, wanted cleared,
@@ -325,7 +833,7 @@ function respawnPlayer(g, reason) {
   const target = missionTarget(g.missions);
   g.renderer.setBeacon(target ? target.x : MISSION_MARKER.x, target ? target.z : MISSION_MARKER.z, !!target);
   g.objective = missionText(g.missions);
-  writeSave(saveState(g));
+  persist(g);
   announce(reason === 'busted'
     ? `Busted. The cops walked you to the safehouse, -$${penalty}.`
     : `Wasted. Rio woke up at the safehouse, -$${penalty}.`);
@@ -338,12 +846,16 @@ function stepWorld(g, dt) {
     updateTraffic(g.traffic, dt, g.player);
     return;
   }
+  g.stats.played += dt;
   g.camYaw -= mouse.dx * 0.0032;
   g.camPitch = Math.max(0.08, Math.min(1.2, g.camPitch - mouse.dy * 0.0025));
   if (g.driving) {
     const car = g.driving;
     const drive = g.input.drive();
-    driveCar(car, dt, drive, g.city);
+    const hitWall = driveCar(car, dt, drive, g.city);
+    // Vehicle damage (v5): walls and traffic both cost the car, and the HUD reads
+    // it back through carHealth(). Guarded — v4 vehicles.js has neither.
+    if (hitWall && Math.abs(car.speed) > 10) vehicles.damageCar?.(car, 6);
     // Soft collision with traffic: shove the car out and kill speed, never pass through.
     for (const other of g.traffic.cars) {
       const dx = car.x - other.x;
@@ -352,7 +864,10 @@ function stepWorld(g, dt) {
       if (d < 4 && d > 0.01) {
         car.x = other.x + (dx / d) * 4;
         car.z = other.z + (dz / d) * 4;
-        if (Math.abs(car.speed) > 6) addCrime(g, CRIME.hitCar, 'hitCar', 'You clipped a car!');
+        if (Math.abs(car.speed) > 6) {
+          addCrime(g, CRIME.hitCar, 'hitCar', 'You clipped a car!');
+          vehicles.damageCar?.(car, Math.min(20, Math.abs(car.speed) * 0.6));
+        }
         car.speed *= 0.5;
       }
     }
@@ -371,7 +886,7 @@ function stepWorld(g, dt) {
     g.player.heading = car.heading;
     g.speed = car.speed;
     // Chase camera: swing behind the car.
-    let want = car.heading + Math.PI;
+    const want = car.heading + Math.PI;
     let d = want - g.camYaw;
     while (d > Math.PI) d -= Math.PI * 2;
     while (d < -Math.PI) d += Math.PI * 2;
@@ -387,6 +902,7 @@ function stepWorld(g, dt) {
         if (dist2(g.player.x, g.player.z, car.x, car.z) < 4.8) {
           g.health -= 12;
           g.player.invulnerable = 1;
+          hitFeedback(g, 0.8);
           const dx = g.player.x - car.x;
           const dz = g.player.z - car.z;
           const d = Math.hypot(dx, dz) || 1;
@@ -398,7 +914,18 @@ function stepWorld(g, dt) {
       }
     }
   }
+  // Traffic first (it also drives the signals), then the side jobs that read the
+  // player's position — the order the contract fixes.
   updateTraffic(g.traffic, dt, g.player);
+  if (g.sidejobs && side && side.updateSidejobs) {
+    side.updateSidejobs(g.sidejobs, {
+      x: g.player.x, z: g.player.z, driving: g.driving !== null,
+      money: g.money,
+      addMoney: (n) => { g.money += n; },
+      random: g.random, city: g.city,
+      onMsg: (text) => { if (text) { announce(text); showBanner(g, text); } },
+    }, dt);
+  }
   updatePolice(g.police, {
     x: g.player.x, z: g.player.z, driving: g.driving !== null, speed: g.speed,
     wanted: g.wanted, city: g.city, random: g.random,
@@ -411,6 +938,7 @@ function stepWorld(g, dt) {
       if (g.player.invulnerable <= 0) {
         g.health -= dmg;
         g.player.invulnerable = 0.8;
+        hitFeedback(g, 1);
         announce(`A rival landed a hit. Health ${Math.max(0, Math.round(g.health))}.`);
       }
     },
@@ -462,7 +990,8 @@ function stepWorld(g, dt) {
       completeMission(g, m.index);
     }
   }
-  // Eight repeatable parcel pickups pay $25 each and reuse the amber-style world markers.
+  // Repeatable parcel pickups: the total is whatever PARCEL_SPOTS gave us (16 in v5),
+  // never a hard-coded number.
   for (const item of g.packages) {
     if (!item.active) continue;
     item.mesh.rotation.y += dt * 0.9;
@@ -472,33 +1001,67 @@ function stepWorld(g, dt) {
       g.packageFound.add(item.index);
       g.packageCount = g.packageFound.size;
       g.money += 25;
-      showBanner(g, `HARBOR PARCEL ${g.packageCount}/8  +$25`);
+      showBanner(g, `HARBOR PARCEL ${g.packageCount}/${g.packages.length}  +$25`);
       sfx('pickup');
-      writeSave(saveState(g));
+      persist(g);
     }
   }
   g.saveTimer += dt;
   if (g.saveTimer > 10) {
     g.saveTimer = 0;
-    writeSave(saveState(g));
+    persist(g);
   }
 }
 
 function placeCamera(g) {
   if (g.screen === SCREEN_TITLE) {
     g.renderer.placeCamera({ x: 0, y: 0, z: 0 }, g.camYaw, 0.55, 150, 30);
+    applyShake(g);
     return;
   }
   const target = g.driving
     ? { x: g.driving.x, y: 0, z: g.driving.z }
     : { x: g.player.x, y: 0, z: g.player.z };
   g.renderer.placeCamera(target, g.camYaw, g.camPitch, g.driving ? 8.4 : 7, g.driving ? 0.45 : 0);
+  applyShake(g);
+}
+
+// Camera shake: a decaying offset in the camera's own ground plane, never enough to
+// lose the frame (max ~0.5 world units for a quarter of a second). It runs off wall
+// clock, not game time, so it can never freeze mid-shake while paused.
+let shakeClock = 0;
+function applyShake(g) {
+  const now = performance.now();
+  const dt = shakeClock ? Math.min(0.1, (now - shakeClock) / 1000) : 0;
+  shakeClock = now;
+  if (!(g.shake > 0)) {
+    g.shake = 0;
+    return;
+  }
+  g.shake = Math.max(0, g.shake - dt);
+  const camera = g.renderer.camera;
+  if (!camera) return;
+  const k = g.shake / SHAKE_TIME;
+  const amp = g.shakeAmp * k * k;
+  if (amp < 0.002) return;
+  const t = now * 0.001;
+  // Two out-of-phase sines so the move reads as a jolt, not a drift.
+  const side = Math.sin(t * 62) * amp;
+  const up = Math.sin(t * 47 + 1.7) * amp * 0.55;
+  const rx = Math.cos(g.camYaw);
+  const rz = -Math.sin(g.camYaw);
+  camera.position.x += rx * side;
+  camera.position.z += rz * side;
+  camera.position.y += up;
 }
 
 function runShot(name) {
   const scene = stageShot(game, name, resetGame);
   game.screen = scene.screen;
   game.hud.showScreen(scene.screen === SCREEN_TITLE ? 'title' : null);
+  // The chase shot is already a real four-star pursuit with the air unit stepped onto
+  // station by shots.js itself, so nothing further is staged here: stepping the police
+  // again would only drift the interceptors off the frame the shot was built around.
   let painted = 0;
   function paint() {
     placeCamera(game);
@@ -517,10 +1080,21 @@ function runGame() {
   const btnContinue = document.getElementById('btn-continue');
   const btnResume = document.getElementById('btn-resume');
   const btnRespawn = document.getElementById('btn-respawn');
+  const overScreen = document.getElementById('screen-over');
   const overTitle = document.getElementById('over-title');
   const overText = document.getElementById('over-text');
   btnContinue.disabled = !save;
   game.hud.showScreen('title');
+  if (game.hud.showSettings) game.hud.showSettings({ ...game.settings, qualityLabel: game.qualityLabel });
+  if (game.hud.bindSettings) {
+    game.hud.bindSettings({
+      onChange: (patch) => {
+        Object.assign(game.settings, patch);
+        saveSettings(game.settings);
+        applySettings(game, game.settings, false);
+      },
+    });
+  }
   announce('Solmar. Rio Vega. Press Enter or click New Game to start.');
 
   function startGame(useSave) {
@@ -537,8 +1111,9 @@ function runGame() {
     if (game.screen !== SCREEN_PLAY) return;
     game.screen = SCREEN_PAUSED;
     game.hud.showScreen('paused');
+    if (game.hud.showSettings) game.hud.showSettings({ ...game.settings, qualityLabel: game.qualityLabel });
     game.input.unlock();
-    writeSave(saveState(game));
+    persist(game);
     announce('Paused.');
   }
   function resumeGame() {
@@ -549,15 +1124,22 @@ function runGame() {
   }
   function endGame(reason) {
     game.screen = SCREEN_OVER;
+    game.endReason = reason;
     game.hud.showScreen('over');
     game.input.unlock();
+    // Busted reads cold blue, wasted reads hot red: the card itself carries the state.
+    if (overScreen) {
+      overScreen.classList.toggle('busted', reason === 'busted');
+      overScreen.classList.toggle('wasted', reason !== 'busted');
+    }
     if (reason === 'busted') {
       overTitle.textContent = 'BUSTED';
-      overText.textContent = 'The cops caught Rio on foot. He pays the fine at the safehouse and walks out clean — $50 lighter.';
+      overText.textContent = 'The cops ran Rio down. He pays the fine at the safehouse and walks out clean — $50 lighter, stars gone.';
       sfx('busted');
     } else {
       overTitle.textContent = 'WASTED';
       overText.textContent = 'Rio got clipped and woke up at the safehouse. The city is still his — he just has to take it again.';
+      sfx('wasted');
     }
     announce(reason === 'busted' ? 'Busted.' : 'Wasted.');
   }
@@ -575,6 +1157,13 @@ function runGame() {
   canvas.addEventListener('pointerdown', () => {
     if (game.screen === SCREEN_PLAY) game.input.lock();
   });
+  // The mission summary dismisses on any key or click. Added in the capture phase so a
+  // click that also grabs pointer lock dismisses too; repeats are ignored so a held key
+  // cannot cause a storm.
+  window.addEventListener('keydown', (ev) => {
+    if (!ev.repeat) dismissMissionSummary();
+  }, true);
+  window.addEventListener('pointerdown', () => dismissMissionSummary(), true);
   document.addEventListener('pointerlockchange', () => {
     if (!game.input.locked && game.screen === SCREEN_PLAY) pauseGame();
   });
@@ -582,45 +1171,90 @@ function runGame() {
     if (document.hidden && game.screen === SCREEN_PLAY) pauseGame();
   });
 
+  // Frame-rate safeguard. Two strategies were built and measured (numbers in the
+  // report): the ladder below (disable the sun shadow pass, then pull the far plane in)
+  // and a shadow-map shrink. `?perf=off|0|1|2|sm` exist so all of them stay reproducible.
+  const watchdog = {
+    frames: 0,
+    start: performance.now(),
+    warmup: 500,
+    settleAt: 0,
+    windows: 0,
+  };
+  if (perfMode === 'pinned' && Number.isFinite(perfLevel)) setQuality(game, perfLevel);
+  if (perfMode === 'sm') setShadowMapSize(game, 1024);
+  function qualityTick() {
+    if (perfMode !== 'adaptive') return;
+    const now = performance.now();
+    watchdog.frames += 1;
+    const elapsed = now - watchdog.start;
+    const window = watchdog.settleAt === 0 && elapsed < watchdog.warmup ? watchdog.warmup : 1500;
+    if (elapsed < window) return;
+    const fps = (watchdog.frames * 1000) / elapsed;
+    watchdog.frames = 0;
+    watchdog.start = now;
+    watchdog.windows += 1;
+    // The user's shadow preference is a ceiling: the watchdog never re-enables a
+    // shadow the player turned off.
+    const ceiling = game.settings.shadows === false ? 1 : 2;
+    // The ladder floors at 1, and never steps to 0 on its own. Measured twice
+    // (A/B, same seed/scene): level 0 and level 1 issue the same pass — 44 draws /
+    // 27.3k tris — and their FPS differ only by noise (2.36 vs 2.10, 2.43 vs 2.54),
+    // so level 0 spends draw distance for zero frame time. ?perf=0 still pins it for
+    // A/B runs; the automatic safeguard just refuses to pay for nothing.
+    if (fps < LOW_FPS) {
+      setQuality(game, Math.max(1, Math.min(ceiling, game.quality - 1)));
+    } else if (fps > HIGH_FPS && game.quality < ceiling && watchdog.windows > 2) {
+      setQuality(game, game.quality + 1);
+    }
+    watchdog.settleAt = now;
+  }
+
   let accumulator = 0;
   let last = performance.now();
+  let ambient = '';
   function frame(now) {
     requestAnimationFrame(frame);
     accumulator += Math.min((now - last) / 1000, MAX_FRAME);
     last = now;
     const actions = game.input.takeActions();
+    const playing = game.screen === SCREEN_PLAY;
     if (actions & ACTION_CONFIRM && game.screen === SCREEN_TITLE) startGame(false);
-    else if (actions & ACTION_PAUSE && game.screen === SCREEN_PLAY) pauseGame();
+    else if (actions & ACTION_PAUSE && playing) pauseGame();
     else if (actions & (ACTION_PAUSE | ACTION_CONFIRM) && game.screen === SCREEN_PAUSED) resumeGame();
     else if (actions & ACTION_CONFIRM && game.screen === SCREEN_OVER) respawn(game.endReason || 'wasted');
-    if (actions & ACTION_ENTER && game.screen === SCREEN_PLAY) enterExitCar(game);
-    if (actions & ACTION_PUNCH && game.screen === SCREEN_PLAY) doPunch(game);
-    if (actions & ACTION_RELOAD && game.screen === SCREEN_PLAY) {
+    if (actions & ACTION_ENTER && playing) enterExitCar(game);
+    if (actions & ACTION_PUNCH && playing) doPunch(game);
+    if (actions & ACTION_RELOAD && playing) {
       if (startReload(game.combat)) sfx('reload');
     }
+    if (actions & ACTION_SWITCH && playing) {
+      const which = game.input.takeSwitch();
+      if (which) switchWeaponSlot(game, which);
+      else switchWeaponSlot(game, 'cycle');
+    }
+    if (actions & ACTION_TAXI && playing) callTaxi(game);
     if (actions & ACTION_MUTE) {
       const off = toggleMute();
       announce(off ? 'Sound off.' : 'Sound on.');
     }
-    if ((actions & ACTION_FIRE || game.input.takeFire()) && game.screen === SCREEN_PLAY) doFire(game);
+    if ((actions & ACTION_FIRE || game.input.takeFire()) && playing) doFire(game);
     if (game.screen === SCREEN_TITLE) {
       game.camYaw += STEP * 0.03;
       while (accumulator >= STEP) {
         stepWorld(game, STEP);
         accumulator -= STEP;
       }
-    } else if (game.screen === SCREEN_PLAY) {
+    } else if (playing) {
       while (accumulator >= STEP) {
         stepWorld(game, STEP);
         accumulator -= STEP;
         if (game.busted) {
           game.busted = false;
-          game.endReason = 'busted';
           endGame('busted');
           break;
         }
         if (game.health <= 0) {
-          game.endReason = 'wasted';
           endGame('wasted');
           break;
         }
@@ -628,14 +1262,41 @@ function runGame() {
     } else {
       accumulator = 0;
     }
-    setEngine(game.speed, game.driving !== null, game.screen === SCREEN_PLAY);
-    setSiren(game.wanted > 0 && game.screen === SCREEN_PLAY);
+    // Audio: every one of these is a guarded optional v5 call.
+    const driving = game.driving !== null;
+    setEngine(game.speed, driving, playing);
+    setSiren(game.wanted > 0 && playing);
+    if (audio.setHeli) audio.setHeli(!!(game.police.heli && game.police.heli.active) && playing);
+    if (audio.setMusic) audio.setMusic(driving && playing);
+    const wantAmbient = playing ? 'city' : 'off';
+    if (wantAmbient !== ambient && audio.setAmbient) {
+      ambient = wantAmbient;
+      audio.setAmbient(wantAmbient);
+    }
     placeCamera(game);
     game.renderer.render();
     game.hud.update(hudState(game), game.city);
+    summaryTick();
+    qualityTick();
   }
   requestAnimationFrame(frame);
 }
 
 if (shot) runShot(shot);
 else runGame();
+
+// Debug/harness handle: lets the perf probes time a reset and inspect the quality
+// ladder without a second copy of the game logic. It holds no credentials and does
+// nothing on its own, so it is safe to leave in a single-player offline build.
+window.__solmar = {
+  game,
+  resetGame: (fresh) => resetGame(game, fresh),
+  hudState: () => hudState(game),
+  setQuality: (lv) => setQuality(game, lv),
+  sidejobsLoaded: !!side,
+  // Harness hooks for the hit feedback (the smoke test needs to take a hit without
+  // waiting for a rival to walk up). Presentation only.
+  hit: (scale = 1) => hitFeedback(game, scale),
+  shake: () => game.shake,
+  summaryVisible: () => !!(summaryEl && summaryEl.classList.contains('on')),
+};

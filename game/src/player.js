@@ -9,7 +9,20 @@ export function createPlayer(renderer, x, z) {
   return {
     x, z, heading: Math.PI, vx: 0, vz: 0, moving: false, phase: 0,
     mesh, invulnerable: 0,
+    // v5: which gun Rio is holding ('' = hands down) and a short recoil timer so the arm
+    // kicks up when a shot goes off. Purely cosmetic — combat.js owns the real state.
+    armed: 'pistol', recoil: 0, aim: 0,
   };
+}
+
+/** Tell Rio which weapon he is carrying so the arm pose matches (combat.js calls this). */
+export function setPlayerWeapon(p, id) {
+  p.armed = id || '';
+}
+
+/** Kick the shooting arm up for a moment — called on every shot fired. */
+export function playerRecoil(p, amount = 0.22) {
+  p.recoil = Math.max(p.recoil || 0, amount);
 }
 
 /**
@@ -47,12 +60,30 @@ export function updatePlayer(p, dt, wish, run, camYaw, city) {
     p.phase += dt * Math.hypot(p.vx, p.vz) * 1.6;
   }
   if (p.invulnerable > 0) p.invulnerable -= dt;
+  if (p.recoil > 0) p.recoil = Math.max(0, p.recoil - dt * 1.6);
   const swing = p.moving ? Math.sin(p.phase) * 0.55 : 0;
+  // Armed pose: both arms come up to a two-handed grip; the run swing still shows through
+  // the legs and, faintly, the arms. A recoil kick lifts the right arm for a beat.
+  const armed = p.armed ? 1 : 0;
+  p.aim += (armed - p.aim) * Math.min(1, dt * 9);
+  const aim = p.aim;
+  const kick = (p.recoil || 0) * 1.9;
   const u = p.mesh.userData;
   u.legL.rotation.x = swing;
   u.legR.rotation.x = -swing;
-  u.armL.rotation.x = -swing * 0.8;
-  u.armR.rotation.x = swing * 0.8;
+  u.armL.rotation.x = (-swing * 0.8) * (1 - aim) + aim * (-1.32 + kick * 0.35);
+  u.armR.rotation.x = (swing * 0.8) * (1 - aim) + aim * (-1.45 + kick);
+  u.armL.rotation.z = aim * 0.16;
+  // Both arms must converge on the weapon. This was written as `-aim * -0.16`, which
+  // evaluates to +0.16 and swung the right arm the same way as the left, so the figure
+  // read as a stiff asymmetric T-pose instead of a two-handed aim.
+  u.armR.rotation.z = -aim * 0.16;
   p.mesh.position.set(p.x, 0, p.z);
   p.mesh.rotation.y = p.heading;
+  // render.js draws the weapon: it bakes the instanced limbs, so the gun is positioned there
+  // from the same shoulder/arm numbers rather than parented into a hierarchy that has no
+  // drawable body. These two fields are the handshake.
+  u.armed = p.armed;
+  u.armRx = u.armR.rotation.x;
+  u.armRz = u.armR.rotation.z;
 }

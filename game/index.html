@@ -11,6 +11,31 @@
   #status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   #hud { position: fixed; inset: 0; pointer-events: none; color: #f2f5f8; text-shadow: 0 1px 3px rgba(0,0,0,.7); }
   #hud[hidden] { display: none; }
+  /* Damage vignette: a red edge wash that deepens as Rio is hurt. Sits under the
+     panels so text stays legible, and pulses once it is critical. */
+  #vignette { position: absolute; inset: 0; opacity: 0; transition: opacity .18s linear;
+    background: radial-gradient(ellipse at center, rgba(120,0,0,0) 42%, rgba(150,8,8,.30) 74%, rgba(96,0,0,.72) 100%);
+    box-shadow: inset 0 0 120px 40px rgba(120, 0, 0, .55); }
+  #vignette.critical { animation: pulse 1.1s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { filter: brightness(1); } 50% { filter: brightness(1.6); } }
+  /* Aiming reticle. The game fires along Rio's own heading with the camera behind him, so
+     the round lands at screen centre; this marks that point. An open ring plus a 2px dot,
+     each with a dark halo via box-shadow, reads over both the bright beach and a dark
+     facade — a solid cross would vanish on one or the other. */
+  #reticle { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
+  #reticle[hidden] { display: none; }
+  #reticle .ring { position: absolute; left: -9px; top: -9px; width: 18px; height: 18px;
+    border: 2px solid rgba(255,255,255,.92); border-radius: 50%;
+    box-shadow: 0 0 0 1px rgba(0,0,0,.65), inset 0 0 0 1px rgba(0,0,0,.55); }
+  #reticle .dot { position: absolute; left: -1px; top: -1px; width: 2px; height: 2px;
+    background: #fff; border-radius: 50%; box-shadow: 0 0 2px 1px rgba(0,0,0,.8); }
+  /* Health bar under the readout: a number alone does not read at contact-sheet size. */
+  #healthbar { width: 132px; height: 7px; margin-top: 3px; border-radius: 4px;
+    background: rgba(0,0,0,.45); box-shadow: inset 0 0 0 1px rgba(255,255,255,.20); overflow: hidden; }
+  #healthbar i { display: block; height: 100%; width: 100%; background: #4cd07d; border-radius: 4px;
+    transition: width .15s linear, background .3s linear; }
+  #healthbar i.low { background: #f0b429; }
+  #healthbar i.critical { background: #ff5544; }
   .panel { position: absolute; background: rgba(10, 16, 24, .55); border-radius: 8px; padding: 8px 12px; }
   #topleft { top: 12px; left: 12px; font-size: 20px; font-weight: 700; line-height: 1.5; }
   #wanted { color: #ffd94d; letter-spacing: 2px; font-size: 22px; }
@@ -22,11 +47,31 @@
   #hint { bottom: 76px; left: 12px; font-size: 13px; opacity: .85; white-space: nowrap; }
   @media (max-width: 1100px) {
     #objective { font-size: 15px; }
+    #weapons { font-size: 13px; }
   }
   #banner { top: 64px; left: 50%; transform: translateX(-50%); font-size: 20px; font-weight: 700; color: #ffc93c; white-space: nowrap; }
+  /* Weapon slots: three chips under the minimap, the held one lit. Static flow
+     inside #hud would put them at the top-left, so the position is explicit. */
+  #weapons { position: absolute; top: 210px; right: 12px; display: flex; flex-direction: column; gap: 4px; background: none; padding: 0; }
+  .wslot { display: flex; justify-content: space-between; gap: 10px; min-width: 132px; padding: 4px 9px;
+    border-radius: 6px; background: rgba(10,16,24,.5); border: 1px solid rgba(255,255,255,.12);
+    font-size: 13px; letter-spacing: .04em; color: #b8c4d0; }
+  .wslot .wname { text-transform: uppercase; font-weight: 700; }
+  .wslot .wrounds { font-variant-numeric: tabular-nums; opacity: .85; }
+  .wslot.active { background: rgba(255,201,60,.92); color: #14181f; border-color: #ffe9a8; text-shadow: none; }
+  .wslot.dry { opacity: .55; }
+  /* Taxi fare line, above the hint (which sits at y=610-644). */
+  #taxi { position: absolute; bottom: 124px; left: 12px; padding: 3px 9px; border-radius: 6px;
+    background: rgba(10, 16, 24, .62); font-size: 14px; font-weight: 700; color: #ffd166; letter-spacing: .06em; }
+  /* Air unit warning, under the wanted panel (which ends at y=181). */
+  #heli { position: absolute; top: 192px; left: 12px; padding: 3px 9px; border-radius: 6px;
+    background: rgba(40, 8, 12, .78); border: 1px solid rgba(255, 107, 107, .45);
+    font-size: 13px; font-weight: 700; letter-spacing: .12em; color: #ff8a8a; }
+  #taxi[hidden], #heli[hidden], #weapons[hidden] { display: none; }
+  #heli.lit { animation: pulse 1.6s ease-in-out infinite; }
   .screen { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(8, 12, 20, .72); color: #eef1f5; z-index: 5; }
   .screen[hidden] { display: none; }
-  .card { max-width: 560px; padding: 28px 36px; background: rgba(16, 22, 34, .92); border: 1px solid rgba(255,255,255,.14); border-radius: 12px; text-align: center; }
+  .card { max-width: 640px; max-height: 92vh; overflow-y: auto; padding: 26px 34px; background: rgba(16, 22, 34, .92); border: 1px solid rgba(255,255,255,.14); border-radius: 12px; text-align: center; }
   .card h1 { margin: 0 0 4px; font-size: 52px; letter-spacing: 4px; color: #ffc93c; }
   .card h2 { margin: 0 0 12px; font-size: 15px; font-weight: 400; color: #9fb4c8; letter-spacing: 1px; }
   .card p { font-size: 15px; line-height: 1.55; color: #c9d4de; }
@@ -34,6 +79,19 @@
   .card button { pointer-events: auto; margin: 8px 6px 0; padding: 12px 26px; font-size: 17px; font-weight: 700; color: #10151c; background: #ffc93c; border: 0; border-radius: 8px; cursor: pointer; }
   .card button:disabled { background: #5a5348; color: #9a938a; cursor: default; }
   .card button.secondary { background: transparent; color: #eef1f5; border: 1px solid rgba(255,255,255,.4); }
+  .card button.small { padding: 7px 14px; font-size: 13px; }
+  /* Settings + stats blocks on the pause and game-over cards. */
+  .settings { pointer-events: auto; margin: 16px auto 2px; display: grid; grid-template-columns: 128px 1fr 54px; gap: 8px 12px; align-items: center; text-align: left; font-size: 13px; color: #b6c2cf; }
+  .settings label { text-transform: uppercase; letter-spacing: .08em; font-size: 11px; color: #8fa0b3; }
+  .settings input[type=range] { pointer-events: auto; width: 100%; accent-color: #ffc93c; }
+  .settings .val { font-variant-numeric: tabular-nums; text-align: right; color: #e7edf3; }
+  .settings .check { display: flex; align-items: center; gap: 8px; grid-column: 2 / span 2; }
+  .settings input[type=checkbox] { pointer-events: auto; width: 16px; height: 16px; accent-color: #ffc93c; }
+  .stats { margin: 14px 0 2px; padding: 10px 12px; background: rgba(255,255,255,.05); border-radius: 8px;
+    font-size: 12.5px; line-height: 1.7; color: #9fb0c2; font-variant-numeric: tabular-nums; }
+  #screen-over.busted { background: rgba(10, 18, 34, .82); }
+  #screen-over.busted h1 { color: #7fc4ff; }
+  #screen-over.wasted { background: rgba(28, 8, 8, .84); }
 </style>
 <script type="importmap">
 { "imports": { "three": "./vendor/three.module.min.js" } }
@@ -43,10 +101,15 @@
 <canvas id="game" aria-label="Solmar: an open-world crime game. Rio Vega explores a sun-soaked coastal city on foot and by car."></canvas>
 <p id="status" role="status" aria-live="polite"></p>
 <div id="hud" hidden>
-  <div class="panel" id="topleft"><span id="money">$250</span><br><span id="health">Health 100</span><br><span id="wanted">☆☆☆☆☆</span><br><span id="ammo">Pistol 12 / 24</span><br><span id="parcels">Parcels 0/8</span></div>
+  <div id="vignette"></div>
+  <div id="reticle" hidden><span class="ring"></span><span class="dot"></span></div>
+  <div class="panel" id="topleft"><span id="money">$250</span><br><span id="health">Health 100</span><br><div id="healthbar"><i id="healthfill"></i></div><br><span id="wanted">☆☆☆☆☆</span><br><span id="ammo">Pistol 12 / 24</span><br><span id="parcels">Parcels 0/16</span></div>
+  <div id="heli" hidden>AIR UNIT OVERHEAD</div>
   <div class="panel" id="banner" style="display:none"></div>
   <canvas id="minimap" width="180" height="180"></canvas>
+  <div id="weapons" hidden></div>
   <div class="panel" id="speed"></div>
+  <div id="taxi" hidden></div>
   <div class="panel" id="objective"></div>
   <div class="panel" id="hint"></div>
 </div>
@@ -59,8 +122,8 @@
     and take the city for yourself. On foot or behind the wheel, every car is yours if
     you can reach it.</p>
     <p class="controls">WASD move &middot; Shift run &middot; Mouse look &middot; E enter / exit car<br>
-    WASD drive &middot; Space handbrake &middot; Click / G fire pistol &middot; F punch &middot; R reload<br>
-    M mute &middot; P / Esc pause</p>
+    WASD drive &middot; Space handbrake &middot; Click / G fire &middot; 1 2 3 / Q switch weapon &middot; F punch &middot; R reload<br>
+    T call a taxi fare &middot; M mute &middot; P / Esc pause &amp; settings</p>
     <button id="btn-new" type="button">New Game</button>
     <button id="btn-continue" class="secondary" type="button" disabled>Continue</button>
   </div>
@@ -69,13 +132,26 @@
   <div class="card">
     <h1 style="font-size:36px">PAUSED</h1>
     <p>Solmar waits for no one. Except right now.</p>
+    <div class="settings">
+      <label for="set-volume">Volume</label>
+      <input id="set-volume" type="range" min="0" max="100" step="1" value="60">
+      <span class="val" id="set-volume-val">60%</span>
+      <label for="set-shadows">Shadows</label>
+      <div class="check"><input id="set-shadows" type="checkbox" checked><span>Sun shadow map (off is faster)</span></div>
+      <label for="set-sens">Mouse</label>
+      <input id="set-sens" type="range" min="20" max="300" step="5" value="100">
+      <span class="val" id="set-sens-val">1.00×</span>
+    </div>
+    <div class="stats" id="pause-stats">Time played 0:00 · Crimes 0 · Fares 0 · Parcels 0 · Accuracy 0% (0/0)</div>
+    <p style="font-size:12px;color:#7f8d9c">Quality: <span id="set-quality">high</span> — drops automatically if the frame rate falls.</p>
     <button id="btn-resume" type="button">Resume</button>
   </div>
 </div>
 <div class="screen" id="screen-over" hidden>
   <div class="card">
     <h1 id="over-title" style="font-size:36px">WASTED</h1>
-    <p id="over-text">Rio got clipped by traffic and woke up at the docks. The city is still his — he just has to take it again.</p>
+    <p id="over-text">Rio got clipped by traffic and woke up at the safehouse. The city is still his — he just has to take it again.</p>
+    <div class="stats" id="over-stats">Time played 0:00 · Crimes 0 · Fares 0 · Parcels 0 · Accuracy 0% (0/0)</div>
     <button id="btn-respawn" type="button">Respawn</button>
   </div>
 </div>

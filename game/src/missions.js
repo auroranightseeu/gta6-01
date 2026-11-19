@@ -6,6 +6,13 @@ import {
   PACKAGE_DROPOFF, PACKAGE_PICKUP,
 } from './config.js';
 
+// Rewards for the v5 missions live here, not in config.js (another worker owns that
+// file and MISSION_REWARDS stops at seven entries).
+const REWARD_TOWER = 350;
+const REWARD_CASH = 400;
+const REWARD_FINALE = 750;
+const CASH_TIME = 150; // seconds to make the cash run; generous, same as mission 2
+
 export const MISSIONS = [
   {
     name: 'Meet Ana',
@@ -64,11 +71,43 @@ export const MISSIONS = [
     name: 'The Last Light',
     reward: MISSION_REWARDS[6],
     target: { x: 0, z: 112, label: 'hilltop lookout' },
-    intro: 'Ana: one last handoff at the hilltop lookout. Take the city in on your way.',
-    objective: `Make the final handoff at the hilltop ($${MISSION_REWARDS[6]})`,
-    doneLine: 'Ana: that is seven. $600, Rio. Solmar belongs to you.',
+    intro: 'Ana: the handoff is at the hilltop lookout. Take the city in on your way up.',
+    objective: `Make the handoff at the hilltop ($${MISSION_REWARDS[6]})`,
+    doneLine: 'Ana: that is seven. $600, Rio. But the tower is still talking — one more visit.',
+  },
+  // --- v5 additions: three more jobs, so the chain runs ten deep ----------------
+  {
+    name: 'The Night Shift',
+    reward: REWARD_TOWER,
+    target: { x: 100, z: 75, label: 'the radio tower' },
+    intro: "Ana: someone is running our traffic off a transmitter on the north road. Go dark on them.",
+    objective: `Kill the rival transmitter at the radio tower ($${REWARD_TOWER})`,
+    doneLine: `Ana: dead air. Beautiful. $${REWARD_TOWER} for that — now move the cash.`,
+  },
+  {
+    name: 'Cash and Carry',
+    reward: REWARD_CASH,
+    target: { x: 25, z: 125, label: 'the coach station' },
+    target2: { x: -112, z: -50, label: 'the boatyard' },
+    timed: CASH_TIME,
+    intro: 'Ana: there is a locker at the coach station with more money in it than sense. Bring it west.',
+    objective: `Collect the cash from the coach station ($${REWARD_CASH})`,
+    pickupLine: 'Bag is in the boot. Boatyard on the west edge — do not stop for anyone.',
+    doneLine: `Ana: clean money, clean hands. $${REWARD_CASH}, Rio.`,
+  },
+  {
+    name: 'The Long Way Home',
+    reward: REWARD_FINALE,
+    target: { x: 125, z: -25, label: 'the coast road' },
+    intro: 'Ana: last one. The coast road, south-east. Come alone and come fast — I will explain when you get here.',
+    objective: `Meet Ana on the coast road one last time ($${REWARD_FINALE})`,
+    doneLine: `Ana: ten jobs, no mistakes. $${REWARD_FINALE}. Solmar is yours, Rio — go enjoy it.`,
   },
 ];
+
+export function missionCount() {
+  return MISSIONS.length;
+}
 
 export function createMissions() {
   return { index: 0, done: Array(MISSIONS.length).fill(false), stage: 'go', timer: 0, hostilesDown: 0 };
@@ -92,17 +131,24 @@ export function missionTarget(m) {
   return def.target || null;
 }
 
+/** What Rio is carrying on a two-leg job, per mission (the schema has no such key). */
+const CARRY = { 1: 'package', 5: 'manifest', 8: 'cash' };
+
 export function missionText(m) {
   const def = currentMission(m);
   if (!def) return 'All jobs done — Solmar is yours.';
   if (def.target2 && m.stage === 'deliver') {
     const t = Math.max(0, Math.ceil(m.timer));
     const clock = m.timer > 0 ? ` · ${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')} left` : '';
-    return `Deliver the package (${def.target2.label || 'drop-off'}) ($${def.reward}${clock})`;
+    const what = CARRY[m.index] || 'package';
+    return `Deliver the ${what} to ${def.target2.label || 'the drop-off'} ($${def.reward}${clock})`;
   }
   if (m.index === 2) return def.objective;
   if (m.index === 4 && m.stage === 'defend') {
     return `Defend the docks — take down the rivals (${m.hostilesDown}/3) ($${def.reward})`;
+  }
+  if (def.pickupLine && m.stage === 'go' && def.target) {
+    return def.objective;
   }
   return def.objective;
 }

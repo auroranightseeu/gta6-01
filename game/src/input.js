@@ -1,6 +1,8 @@
 // Keyboard and mouse input. Held keys are read every frame; one-shot presses (confirm,
-// pause, enter/exit car) are queued as bit flags and taken once, so a press between two
-// frames is never lost and never counted twice. Mouse orbit uses pointer lock on the canvas.
+// pause, enter/exit car, weapon switch, taxi) are queued as bit flags and taken once, so a
+// press between two frames is never lost and never counted twice. Mouse orbit uses pointer
+// lock on the canvas; a settings sensitivity multiplier scales the orbit without touching
+// the camera code.
 export const ACTION_CONFIRM = 1;
 export const ACTION_PAUSE = 2;
 export const ACTION_ENTER = 4;
@@ -8,6 +10,10 @@ export const ACTION_PUNCH = 8;
 export const ACTION_RELOAD = 16;
 export const ACTION_MUTE = 32;
 export const ACTION_FIRE = 64;
+// v5: weapon switch (Digit1/2/3 + KeyQ) and the taxi key. ACTION_SWITCH is one bit for
+// the whole family; the slot is taken from takeSwitch() so main.js knows WHICH one.
+export const ACTION_SWITCH = 128;
+export const ACTION_TAXI = 256;
 
 const FORWARD = new Set(['KeyW', 'ArrowUp']);
 const BACK = new Set(['KeyS', 'ArrowDown']);
@@ -22,6 +28,15 @@ const PUNCH = new Set(['KeyF']);
 const RELOAD = new Set(['KeyR']);
 const MUTE = new Set(['KeyM']);
 const FIRE = new Set(['KeyG']);
+const TAXI = new Set(['KeyT']);
+// Digit1..3 select a weapon, Q cycles: all four raise ACTION_SWITCH.
+const SWITCH = new Map([
+  ['Digit1', 'pistol'],
+  ['Digit2', 'smg'],
+  ['Digit3', 'shotgun'],
+  ['KeyQ', 'cycle'],
+]);
+const MAX_SWITCH_QUEUE = 4;
 
 export function createInput(canvas) {
   const held = new Set();
@@ -29,6 +44,8 @@ export function createInput(canvas) {
   let mouseDX = 0;
   let mouseDY = 0;
   let fireQueued = false;
+  let sensitivity = 1; // 1 = the v4 feel; settings slider multiplies this
+  const switches = [];
 
   window.addEventListener('keydown', (event) => {
     if (CONFIRM.has(event.code)) {
@@ -45,6 +62,13 @@ export function createInput(canvas) {
       if (!event.repeat) actions |= ACTION_MUTE;
     } else if (FIRE.has(event.code)) {
       if (!event.repeat) actions |= ACTION_FIRE;
+    } else if (TAXI.has(event.code)) {
+      if (!event.repeat) actions |= ACTION_TAXI;
+    } else if (SWITCH.has(event.code)) {
+      if (!event.repeat) {
+        actions |= ACTION_SWITCH;
+        if (switches.length < MAX_SWITCH_QUEUE) switches.push(SWITCH.get(event.code));
+      }
     } else if (
       FORWARD.has(event.code) || BACK.has(event.code) || LEFT.has(event.code) ||
       RIGHT.has(event.code) || RUN.has(event.code) || HANDBRAKE.has(event.code)
@@ -94,6 +118,14 @@ export function createInput(canvas) {
     get locked() {
       return document.pointerLockElement === canvas;
     },
+    /** 0.2..3 orbit multiplier from the settings slider (1 = v4 feel). */
+    setSensitivity(v) {
+      const n = Number(v);
+      sensitivity = Number.isFinite(n) ? Math.max(0.2, Math.min(3, n)) : 1;
+    },
+    get sensitivity() {
+      return sensitivity;
+    },
     /** -1..1 forward, -1..1 strafe right, in camera space. */
     move() {
       const f = (has(FORWARD) ? 1 : 0) - (has(BACK) ? 1 : 0);
@@ -112,10 +144,10 @@ export function createInput(canvas) {
       const throttle = (has(FORWARD) ? 1 : 0) - (has(BACK) ? 1 : 0);
       return { steer, throttle, handbrake: has(HANDBRAKE) };
     },
-    /** Mouse orbit since the last call, in pixels. */
+    /** Mouse orbit since the last call, in pixels, already scaled by sensitivity. */
     takeMouse() {
-      const dx = mouseDX;
-      const dy = mouseDY;
+      const dx = mouseDX * sensitivity;
+      const dy = mouseDY * sensitivity;
       mouseDX = 0;
       mouseDY = 0;
       return { dx, dy };
@@ -124,6 +156,10 @@ export function createInput(canvas) {
       const taken = actions;
       actions = 0;
       return taken;
+    },
+    /** 'pistol' | 'smg' | 'shotgun' | 'cycle', or null when no switch is queued. */
+    takeSwitch() {
+      return switches.length ? switches.shift() : null;
     },
     /** True once if the pistol trigger was pulled (mouse click or G) since last call. */
     takeFire() {
