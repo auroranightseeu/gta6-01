@@ -1,6 +1,8 @@
-// Missions + story: a five-job chain from fixer Ana Deluca. Each mission has an
-// objective, a map marker, short dialogue and a cash reward. State is plain data so
-// save.js can persist it and main.js can drive the transitions.
+// Missions + story: a ten-job chain from fixer Ana Deluca — Meet Ana, The Package,
+// Cool Off, Getaway, The Docks, The Night Ferry, The Last Light, The Night Shift,
+// Cash and Carry, The Long Way Home. Each mission has an objective, a map marker,
+// short dialogue and a cash reward. State is plain data so save.js can persist it
+// and main.js can drive the transitions.
 import {
   DOCKS, GETAWAY_MARKER, MISSION2_TIME, MISSION_MARKER, MISSION_REWARDS,
   PACKAGE_DROPOFF, PACKAGE_PICKUP,

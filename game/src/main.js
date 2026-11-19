@@ -2,9 +2,9 @@
 // police (with the air unit), pistol/SMG/shotgun combat, side jobs, saves and settings.
 // The world advances in fixed 1/60 s steps; the renderer paints what is there.
 // Screens: title, play, paused (with settings + stats), game over.
-// ?seed=N fixes the city; ?shot=start|drive|foot|chase (with &seed=N) stages that
-// scene instead of running the loop, paints it twice and sets window.__shotReady.
-// ?perf=off|fixed|adaptive selects the frame-rate safeguard (default adaptive).
+// ?seed=N fixes the city; ?shot=start|drive|foot|chase|shoot (with &seed=N) stages
+// that scene instead of running the loop, paints it twice and sets window.__shotReady.
+// ?perf=adaptive (default) | off (never touch quality) | 0|1|2 (pin a quality level).
 //
 // PARALLEL SAFETY: this file is the integration point and every v5 module is being
 // written at the same time, so nothing here statically imports a symbol that did not
