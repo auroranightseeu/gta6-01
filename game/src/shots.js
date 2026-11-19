@@ -204,7 +204,11 @@ function stageShoot(game) {
   game.player.heading = Math.PI;
   game.player.mesh.position.set(-25, 0, -52);
   game.player.mesh.rotation.y = Math.PI;
-  game.camYaw = 0;
+  // Three-quarter angle from the right-rear (WJ item 3): dead-rear (camYaw 0) hides
+  // the gun behind Rio's torso, so the frame proved shooting only via the HUD. At
+  // 0.7 the raised grip, the weapon, the muzzle flash at the barrel tip and the
+  // tracer toward the rivals are all visible, with the rivals in frame beyond him.
+  game.camYaw = 0.7;
   game.camPitch = 0.22;
   game.wanted = 2;
   game.hint = 'Mouse aim · LMB fire · R reload · 1/2/3 weapon · P pause';

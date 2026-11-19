@@ -1166,10 +1166,10 @@ function runShot(name) {
     for (let i = 0; i < 40; i += 1) {
       updatePlayer(game.player, STEP, { f: 0, s: 0 }, false, game.camYaw, game.city);
     }
-    if (name === 'shoot') {
-      playerRecoil(game.player);
-      updatePlayer(game.player, STEP, { f: 0, s: 0 }, false, game.camYaw, game.city);
-    }
+    // No recoil kick baked in for the shoot frame (WJ item 3): the kick pitches
+    // the muzzle up ~24 deg, so the gun read as firing at the sky with the weapon
+    // small near the head. The level aim already shows the raised two-handed grip
+    // and the weapon; the live flash (0.18 s) and tracer prove the shot.
   }
   // The chase shot is already a real four-star pursuit with the air unit stepped onto
   // station by shots.js itself, so nothing further is staged here: stepping the police
