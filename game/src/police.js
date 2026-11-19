@@ -12,6 +12,39 @@ function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
 }
 
+// --- Beam / pool falloff textures (WJ item 4) ---------------------------------------
+// A plain cone reads as a flat pale triangle because every face is one uniform
+// opacity; a uniform circle reads as a grey disc. Both get an alpha gradient so
+// the light falls off instead of ending in a hard edge.
+
+/** Vertical white->transparent gradient: bright at the top (the lamp), gone at the bottom (the ground). Canvas top maps to the cone apex (v=1). */
+function beamGradient() {
+  const c = document.createElement('canvas');
+  c.width = 4; c.height = 256;
+  const g = c.getContext('2d');
+  const grad = g.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0, 'rgba(255,255,255,0.9)');
+  grad.addColorStop(0.45, 'rgba(255,255,255,0.4)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 4, 256);
+  return c;
+}
+
+/** Radial white->transparent gradient: bright centre, no hard rim. */
+function poolGradient() {
+  const c = document.createElement('canvas');
+  c.width = 128; c.height = 128;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grad.addColorStop(0, 'rgba(255,255,255,0.9)');
+  grad.addColorStop(0.5, 'rgba(255,255,255,0.35)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 128, 128);
+  return c;
+}
+
 // --- Air unit tuning (local: config.js is another worker's file) -------------------
 // Placement was measured against the game's own chase camera (62 deg FOV, pitch
 // 0.30, 8.4 m back), which only sees ~21 deg above horizontal. An aircraft at
@@ -206,22 +239,35 @@ function buildHeli(renderer) {
   // Narrow and soft on purpose: at the old spread (2.2 + 0.15 * dist, ~5.8 m radius
   // at the ground) the cone filled the chase frame as two flat pale polygons over
   // the buildings and sky. A real searchlight is a beam, ~2 m across where it lands.
+  const beamTex = new THREE.CanvasTexture(beamGradient());
   const coneGeo = new THREE.ConeGeometry(1, 1, 14, 1, true);
   coneGeo.translate(0, -0.5, 0);
   const cone = new THREE.Mesh(coneGeo, new THREE.MeshBasicMaterial({
-    color: 0xfff3bd, transparent: true, opacity: 0.08, depthWrite: false,
+    color: 0xfff3bd, map: beamTex, transparent: true, opacity: 0.06, depthWrite: false,
     side: THREE.DoubleSide, blending: THREE.AdditiveBlending, toneMapped: false,
   }));
   cone.visible = false;
   cone.frustumCulled = false;
   renderer.scene.add(cone);
 
+  // A second, wider, much fainter cone around the first: the beam's silhouette is
+  // a hard triangle edge on its own; the halo blurs it into the air.
+  const haloGeo = new THREE.ConeGeometry(1, 1, 14, 1, true);
+  haloGeo.translate(0, -0.5, 0);
+  const halo = new THREE.Mesh(haloGeo, new THREE.MeshBasicMaterial({
+    color: 0xfff3bd, map: beamTex, transparent: true, opacity: 0.02, depthWrite: false,
+    side: THREE.DoubleSide, blending: THREE.AdditiveBlending, toneMapped: false,
+  }));
+  halo.visible = false;
+  halo.frustumCulled = false;
+  renderer.scene.add(halo);
+
   // A soft pool of light on the street where the beam lands. Sized to the beam, not
   // the old flood: at 7.8 m radius it washed the whole road pale.
   const poolGeo = new THREE.CircleGeometry(1, 20);
   poolGeo.rotateX(-Math.PI / 2);
   const pool = new THREE.Mesh(poolGeo, new THREE.MeshBasicMaterial({
-    color: 0xffe9a8, transparent: true, opacity: 0.14, depthWrite: false,
+    color: 0xffe9a8, map: new THREE.CanvasTexture(poolGradient()), transparent: true, opacity: 0.10, depthWrite: false,
     blending: THREE.AdditiveBlending, toneMapped: false,
   }));
   pool.visible = false;
@@ -256,7 +302,7 @@ function buildHeli(renderer) {
   ]), new THREE.MeshBasicMaterial({ color: 0xff3a2a, toneMapped: false }));
   group.add(beacons);
 
-  return { group, body, stripe, canopy, rotor, tailRotor, cone, pool, lens, disc, beacons };
+  return { group, body, stripe, canopy, rotor, tailRotor, cone, halo, pool, lens, disc, beacons };
 }
 
 export function createPolice(renderer) {
@@ -302,6 +348,7 @@ export function clearPolice(police) {
     h.seeded = false;
     if (h.group) h.group.visible = false;
     if (h.cone) h.cone.visible = false;
+    if (h.halo) h.halo.visible = false;
     if (h.pool) h.pool.visible = false;
   }
 }
@@ -444,8 +491,9 @@ function updateHeli(police, ctx, dt) {
       h.x += (ctx.x - h.x) * 0.4 * dt;
       h.z += (ctx.z - h.z) * 0.4 * dt;
       const f = Math.max(0, 1 - h.t / HELI.leaveTime);
-      h.cone.material.opacity = 0.08 * f;
-      h.pool.material.opacity = 0.14 * f;
+      h.cone.material.opacity = 0.06 * f;
+      h.halo.material.opacity = 0.02 * f;
+      h.pool.material.opacity = 0.10 * f;
       h.rotor.rotation.y += dt * 26;
       h.tailRotor.rotation.x += dt * 40;
       if (h.beacons) h.beacons.material.color.setHex(0x581410);
@@ -454,6 +502,7 @@ function updateHeli(police, ctx, dt) {
         h.state = 'off';
         h.group.visible = false;
         h.cone.visible = false;
+        h.halo.visible = false;
         h.pool.visible = false;
       }
       return;
@@ -490,9 +539,11 @@ function updateHeli(police, ctx, dt) {
     h.active = true;
     h.group.visible = true;
     h.cone.visible = true;
+    h.halo.visible = true;
     h.pool.visible = true;
-    h.cone.material.opacity = 0.08;
-    h.pool.material.opacity = 0.14;
+    h.cone.material.opacity = 0.06;
+    h.halo.material.opacity = 0.02;
+    h.pool.material.opacity = 0.10;
     h.group.position.set(h.x, h.y, h.z);
     return;
   }
@@ -506,9 +557,11 @@ function updateHeli(police, ctx, dt) {
     h.state = 'hover';
     h.group.visible = true;
     h.cone.visible = true;
+    h.halo.visible = true;
     h.pool.visible = true;
-    h.cone.material.opacity = 0.08;
-    h.pool.material.opacity = 0.14;
+    h.cone.material.opacity = 0.06;
+    h.halo.material.opacity = 0.02;
+    h.pool.material.opacity = 0.10;
   }
 
   const tgt = heliTarget(h, ctx, dt);
@@ -569,6 +622,10 @@ function updateHeli(police, ctx, dt) {
   h.cone.quaternion.setFromUnitVectors(_down, _dir);
   const spread = 1.0 + dist * 0.05;
   h.cone.scale.set(spread, dist, spread);
+  // The halo rides the same beam, wider and fainter, so the edge reads soft.
+  h.halo.position.copy(h.cone.position);
+  h.halo.quaternion.copy(h.cone.quaternion);
+  h.halo.scale.set(spread * 1.35, dist, spread * 1.35);
   h.pool.position.set(aimX, 0.07, aimZ);
   const poolR = Math.max(1.8, spread * 1.1);
   h.pool.scale.set(poolR, 1, poolR);
