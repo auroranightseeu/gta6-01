@@ -21,6 +21,8 @@ import {
   missionHud, missionTarget, missionText,
 } from './missions.js';
 import { createHud } from './hud.js';
+import { createLandmarks } from './landmarks.js';
+import { applyGoldenHour } from './golden-hour.js';
 import { createPolice, clearPolice, policeHud, updatePolice } from './police.js';
 import * as combat from './combat.js';
 import { createTraffic, resetTraffic, updateTraffic } from './traffic.js';
@@ -130,6 +132,12 @@ function buildGame() {
   const random = createRandom(seed);
   const city = createCity(random);
   const renderer = createRenderer(canvas, city);
+  // v5 look: six district landmarks in the skyline (two instanced draws) and the golden
+  // hour light pass over the finished scene. Both are one-shot at boot: the landmarks add
+  // their own colliders before the player, cars and traffic are placed, and golden-hour
+  // re-aims the renderer's own sun rather than adding a second one.
+  createLandmarks(city, renderer.scene);
+  applyGoldenHour(renderer.scene);
   const input = createInput(canvas);
   const hud = createHud();
   const player = createPlayer(renderer, SPAWN.x, SPAWN.z);

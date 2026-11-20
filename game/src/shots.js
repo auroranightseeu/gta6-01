@@ -36,6 +36,7 @@ export function stageShot(game, name, resetGame) {
   if (name === 'drive') return stageDrive(game);
   if (name === 'foot') return stageFoot(game);
   if (name === 'shoot') return stageShoot(game);
+  if (name === 'dusk') return stageDusk(game);
   if (name === 'chase') return stageChase(game);
   // Start = the cover (W-H winner, 19 Nov): the police-chase frame, not the
   // title screen. The title aerial (yaw 2.6 tried) stays dim behind its panel
@@ -130,6 +131,37 @@ function stageFoot(game) {
     updatePlayer(game.player, STEP, { f: 1, s: 0 }, false, game.camYaw, game.city);
     updateTraffic(game.traffic, STEP);
   }
+  game.speed = 0;
+  return { screen: SCREEN_PLAY };
+}
+
+/**
+ * Golden hour: Rio stands at the (25,75) crossing looking north-west across the bay at the
+ * Downtown landmark tower, with the low sun behind the skyline. The frame is the one the
+ * lighting pass is judged on, so it carries every HUD element at once — a live mission
+ * (objective line, wanted stars row, minimap blip and the gold beacon beam at the getaway
+ * marker), the district/street line and the controls hint. The camera sits behind Rio with
+ * a nearly level pitch: the tower is 46 m tall and ~93 m away, so a pitched-down camera
+ * would crop it and the dusk sky above it.
+ */
+const DUSK = { x: 25, z: 75, yaw: Math.PI / 4, pitch: 0.07 };
+function stageDusk(game) {
+  beginMission(game.missions, 3);
+  game.objective = missionText(game.missions);
+  game.renderer.setBeacon(GETAWAY_MARKER.x, GETAWAY_MARKER.z, true);
+  game.money = 1250;
+  game.player.x = DUSK.x;
+  game.player.z = DUSK.z;
+  // Facing is +z rotated by heading, so heading = PI + PI/4 looks north-west, the way the
+  // camera is pointed; a mismatch would turn Rio's back to the skyline.
+  game.player.heading = Math.PI + Math.PI / 4;
+  game.player.mesh.position.set(DUSK.x, 0, DUSK.z);
+  game.player.mesh.rotation.y = game.player.heading;
+  game.camYaw = DUSK.yaw;
+  game.camPitch = DUSK.pitch;
+  game.hint = 'WASD move · Shift run · E enter car · P pause';
+  // A couple of steps of traffic so the road is not frozen mid-lane, camera car-free.
+  for (let i = 0; i < 12; i += 1) updateTraffic(game.traffic, STEP);
   game.speed = 0;
   return { screen: SCREEN_PLAY };
 }
