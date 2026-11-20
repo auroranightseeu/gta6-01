@@ -18,7 +18,7 @@ import {
   ACTION_CONFIRM, ACTION_ENTER, ACTION_FIRE, ACTION_MUTE, ACTION_PAUSE,
   ACTION_PUNCH, ACTION_RELOAD, ACTION_SWITCH, ACTION_TAXI, createInput,
 } from './input.js';
-import { createPlayer, playerRecoil, setPlayerWeapon, updatePlayer } from './player.js';
+import { aimAtCamera, createPlayer, playerRecoil, setPlayerWeapon, updatePlayer } from './player.js';
 import * as vehicles from './vehicles.js';
 import { createTraffic, resetTraffic, updateTraffic } from './traffic.js';
 import { createPolice, clearPolice, updatePolice } from './police.js';
@@ -698,9 +698,9 @@ function hudState(g) {
     packageCount: g.packageCount,
     packageTotal: g.packages.length,
     weapons: weaponSlots(g),
-    // The reticle only makes sense when a shot would actually go down the screen centre,
-    // which is exactly the on-foot case: the reticle hides in a car (drive-by aims at the
-    // nearest target, not at centre) and on the title/busted screens.
+    // Reticle: on foot while playing, a shot goes down screen centre and this marks it —
+    // locked or not, since before the lock a shot still goes there. It hides in a car (the
+    // drive-by aims at the nearest target, not at centre) and on the title/busted screens.
     armed: !g.driving && g.screen === SCREEN_PLAY,
     taxi,
     damage: Math.max(0, Math.min(100, damage)),
@@ -826,6 +826,10 @@ function doFire(g) {
   for (const p of g.traffic.peds) if (p.flee > 0) fleeing += 1;
   const result = firePistol(g.combat, {
     x: g.player.x, z: g.player.z, heading: g.player.heading,
+    // On foot the shot follows the camera's sight line, so the round lands under the
+    // reticle whatever way Rio's body happens to be facing. In a car the drive-by
+    // method takes over and this is ignored.
+    camYaw: g.camYaw,
     peds: g.traffic.peds, trafficCars: g.traffic.cars, sanctioned,
     // Drive-by is detected from the car itself, not from position coincidence:
     // pass the car Rio is sitting in so the muzzle is the driver's window.
@@ -842,6 +846,9 @@ function doFire(g) {
     g.stats.shots += 1;
     // The shooting arm kicks on every shot; without this the pose never changes.
     playerRecoil(g.player);
+    // Firing on foot turns the body to the camera's yaw, so the figure faces the shot
+    // and the muzzle sits under the reticle rather than off to one side.
+    if (!g.driving) aimAtCamera(g.player, g.camYaw);
     let rivalHpAfter = 0;
     for (const h of g.combat.hostiles) if (!h.down) rivalHpAfter += h.hp;
     let fleeingAfter = 0;
@@ -935,8 +942,15 @@ function stepWorld(g, dt) {
   // it can never vanish before the player has seen it.
   if (g.hint && g.hintUntil && g.time > g.hintUntil) g.hint = '';
   g.stats.played += dt;
-  g.camYaw -= mouse.dx * 0.0032;
-  g.camPitch = Math.max(0.08, Math.min(1.2, g.camPitch - mouse.dy * 0.0025));
+  // Before the pointer is locked the mouse turns nothing: the camera keeps the yaw it
+  // has and a shot goes down screen centre. The first click on the canvas takes the
+  // lock (runGame's pointerdown), and from then on the mouse turns the camera.
+  if (!g.driving && g.input.locked) {
+    g.camYaw -= mouse.dx * 0.0032;
+    g.camPitch = Math.max(0.08, Math.min(1.2, g.camPitch - mouse.dy * 0.0025));
+  } else if (g.driving) {
+    g.camPitch = Math.max(0.08, Math.min(1.2, g.camPitch - mouse.dy * 0.0025));
+  }
   if (g.driving) {
     const car = g.driving;
     const drive = g.input.drive();
@@ -983,6 +997,10 @@ function stepWorld(g, dt) {
   } else {
     const move = g.input.move();
     updatePlayer(g.player, dt, move, g.input.run(), g.camYaw, g.city);
+    // Aiming on foot: turn the body to the camera's yaw every step, so Rio faces where
+    // the reticle points even while standing still, and his heading (the muzzle's frame)
+    // matches the shot. Driving keeps the car's heading.
+    if (!g.driving) aimAtCamera(g.player, g.camYaw, 0);
     g.speed = Math.hypot(g.player.vx, g.player.vz);
     // A traffic car that clips Rio hurts him.
     if (g.player.invulnerable <= 0) {
@@ -1113,11 +1131,77 @@ function placeCamera(g) {
     applyShake(g);
     return;
   }
-  const target = g.driving
-    ? { x: g.driving.x, y: 0, z: g.driving.z }
-    : { x: g.player.x, y: 0, z: g.player.z };
-  g.renderer.placeCamera(target, g.camYaw, g.camPitch, g.driving ? 8.4 : 7, g.driving ? 0.45 : 0);
+  let target;
+  let lift;
+  if (g.driving) {
+    target = { x: g.driving.x, y: 0, z: g.driving.z };
+    lift = 0.45;
+  } else {
+    // OVER THE SHOULDER: the whole camera rig — its position AND the point it looks at —
+    // slides to Rio's right, so the frame centres on a line beside his head instead of on
+    // it, and the reticle no longer sits on his skull. Because the rig moves as a whole,
+    // the camera still faces exactly down camYaw: screen centre is the aim yaw, which is
+    // the line combat.aimFromCamera converges the shot onto. In a car the chase camera
+    // stays centred on the roof.
+    const rx = Math.cos(g.camYaw);
+    const rz = -Math.sin(g.camYaw);
+    target = {
+      x: g.player.x + rx * SHOULDER_OFFSET,
+      y: 0,
+      z: g.player.z + rz * SHOULDER_OFFSET,
+    };
+    lift = 0.35;
+  }
+  g.renderer.placeCamera(target, g.camYaw, g.camPitch, g.driving ? 8.4 : 7, lift);
   applyShake(g);
+}
+
+/** How far to Rio's right the on-foot camera rig sits (combat.aimFromCamera matches it). */
+const SHOULDER_OFFSET = 0.55;
+
+// --- pointer-lock prompt -------------------------------------------------------------
+// Until the player clicks the canvas the mouse does not turn the camera, so the first
+// click has to say what it did. One small line, centred under the reticle, that comes
+// back whenever the lock is released (pause, alt-tab, Esc). It is never part of a staged
+// screenshot: those paint with no pointer lock and no hint.
+let lockHintEl = null;
+let lockHintStyle = false;
+let lockHintShown = null;
+
+function ensureLockHint() {
+  if (lockHintEl) return lockHintEl;
+  try {
+    if (!lockHintStyle) {
+      lockHintStyle = true;
+      const style = document.createElement('style');
+      style.textContent = [
+        '#lockhint{position:fixed;left:50%;top:56%;transform:translateX(-50%);',
+        'padding:7px 14px;border-radius:8px;background:rgba(10,16,24,.72);',
+        'border:1px solid rgba(255,255,255,.18);color:#eef1f5;font:600 14px/1.4 system-ui,sans-serif;',
+        'letter-spacing:.02em;pointer-events:none;z-index:6;white-space:nowrap;',
+        'text-shadow:0 1px 3px rgba(0,0,0,.7);}',
+        '#lockhint[hidden]{display:none;}',
+      ].join('');
+      document.head.appendChild(style);
+    }
+    lockHintEl = document.createElement('div');
+    lockHintEl.id = 'lockhint';
+    lockHintEl.textContent = 'Click to lock aim — move the mouse to aim';
+    document.body.appendChild(lockHintEl);
+  } catch {
+    lockHintEl = null;
+  }
+  return lockHintEl;
+}
+
+/** Show the prompt while playing on foot with no pointer lock, hide it otherwise. */
+function updateLockHint(g) {
+  const want = !shot && g.screen === SCREEN_PLAY && !g.driving && !g.input.locked;
+  if (want === lockHintShown) return;
+  const el = ensureLockHint();
+  if (!el) return;
+  el.hidden = !want;
+  lockHintShown = want;
 }
 
 // Camera shake: a decaying offset in the camera's own ground plane, never enough to
@@ -1220,7 +1304,9 @@ function runGame() {
     game.hintUntil = game.time + HINT_SECONDS;
     game.screen = SCREEN_PLAY;
     game.hud.showScreen(null);
-    game.input.lock();
+    // No lock here: the FIRST click on the canvas takes the pointer (the pointerdown
+    // handler below), and until then the prompt says so and the mouse leaves the camera
+    // alone. Grabbing it from the New Game button would skip that beat entirely.
     announce(useSave && save ? 'Playing. Welcome back to Solmar.' : 'Playing. Meet Ana Deluca — follow the amber marker.');
   }
   function pauseGame() {
@@ -1270,8 +1356,16 @@ function runGame() {
   btnContinue.addEventListener('click', () => startGame(true));
   btnResume.addEventListener('click', resumeGame);
   btnRespawn.addEventListener('click', () => respawn(game.endReason || 'wasted'));
+  // The first click on the canvas takes the pointer: that click locks the aim and the
+  // prompt (updateLockHint) goes away. Later clicks fire, so the lock request is only
+  // made when the pointer is loose — re-requesting on every shot would be a no-op at
+  // best and an error at worst.
   canvas.addEventListener('pointerdown', () => {
-    if (game.screen === SCREEN_PLAY) game.input.lock();
+    if (game.screen !== SCREEN_PLAY) return;
+    if (!game.input.locked) {
+      game.input.lock();
+      if (!game.driving) announce('Aim locked — move the mouse to aim.');
+    }
   });
   // The mission summary dismisses on any key or click. Added in the capture phase so a
   // click that also grabs pointer lock dismisses too; repeats are ignored so a held key
@@ -1281,6 +1375,8 @@ function runGame() {
   }, true);
   window.addEventListener('pointerdown', () => dismissMissionSummary(), true);
   document.addEventListener('pointerlockchange', () => {
+    // Releasing the lock (Esc, alt-tab) pauses and brings the prompt back; taking it
+    // again by clicking the canvas resumes play through the pointerdown handler.
     if (!game.input.locked && game.screen === SCREEN_PLAY) pauseGame();
   });
   document.addEventListener('visibilitychange', () => {
@@ -1390,6 +1486,7 @@ function runGame() {
       audio.setAmbient(wantAmbient);
     }
     placeCamera(game);
+    updateLockHint(game);
     game.renderer.render();
     game.hud.update(hudState(game), game.city);
     summaryTick();

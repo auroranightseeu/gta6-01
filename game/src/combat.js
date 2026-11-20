@@ -17,17 +17,26 @@ const MAX_TRACERS = 7;      // one shotgun blast fits in a single draw call
 const CRATE_RESPAWN = 60;
 
 // --- weapons -------------------------------------------------------------------------
-// range   hitscan reach in metres            spread  aim cone half-angle, radians
+// range   hitscan reach in metres            spread  tracer jitter/pattern, radians
+// cone    auto-aim half-angle in DEGREES: how far off the aim ray a target may sit and
+//         still be hit. It is the shot's real tolerance, so it is what makes a mouse
+//         aim forgiving or not — 5° on a pistol is a hand's width at 20 m, not the
+//         quarter-screen sweep a 27° cone gave.
 // pellets how many tracers/hit rolls per shot (shotgun pattern)
 // knock   metres of shove per hit            carDmg  damage added to a car per hit
 export const WEAPONS = {
   // muzzle: distance from the shooter's centre to the barrel tip when aiming — the
   // hand sits ~0.63 m ahead of the centre and the barrel runs (len - 0.07) m past
   // it. Keep in step with the barrel lengths in GUN_GEO (render.js syncGuns).
-  pistol: { id: 'pistol', name: 'Pistol', magSize: 12, cooldown: 0.25, range: 30, spread: 0.035, pellets: 1, reload: 0.9, knock: 0, carDmg: 5, startMag: 12, startReserve: 24, crate: 12, muzzle: 0.9 },
-  smg: { id: 'smg', name: 'SMG', magSize: 30, cooldown: 0.075, range: 26, spread: 0.115, pellets: 1, reload: 1.15, knock: 0.25, carDmg: 3, startMag: 0, startReserve: 0, crate: 60, muzzle: 1.18 },
-  shotgun: { id: 'shotgun', name: 'Shotgun', magSize: 6, cooldown: 0.85, range: 15, spread: 0.30, pellets: 7, reload: 1.5, knock: 2.4, carDmg: 9, startMag: 0, startReserve: 0, crate: 12, muzzle: 1.48 },
+  pistol: { id: 'pistol', name: 'Pistol', magSize: 12, cooldown: 0.25, range: 30, spread: 0.035, cone: 5, pellets: 1, reload: 0.9, knock: 0, carDmg: 5, startMag: 12, startReserve: 24, crate: 12, muzzle: 0.9 },
+  smg: { id: 'smg', name: 'SMG', magSize: 30, cooldown: 0.075, range: 26, spread: 0.115, cone: 7, pellets: 1, reload: 1.15, knock: 0.25, carDmg: 3, startMag: 0, startReserve: 0, crate: 60, muzzle: 1.18 },
+  shotgun: { id: 'shotgun', name: 'Shotgun', magSize: 6, cooldown: 0.85, range: 15, spread: 0.30, cone: 10, pellets: 7, reload: 1.5, knock: 2.4, carDmg: 9, startMag: 0, startReserve: 0, crate: 12, muzzle: 1.48 },
 };
+
+/** A weapon's auto-aim cone as a half-angle in radians. */
+function coneOf(def) {
+  return ((def.cone * Math.PI) / 180);
+}
 export const WEAPON_ORDER = ['pistol', 'smg', 'shotgun'];
 
 // Weapon + wrench crates. Local to this file (config.js belongs to W-A).
@@ -363,12 +372,49 @@ function driveByHybrid(renderer, ctx) {
 }
 
 /**
- * The aim ray for one shot. On foot it is a muzzle at the barrel tip along his heading
- * (WEAPONS[].muzzle — the hand is ~0.63 m ahead of Rio when aiming and the barrel runs
- * past it, so the flash and the tracer start at the muzzle, not at his body);
- * from behind the wheel it is the chosen drive-by method. Drive-by is detected from the car
- * Rio is sitting on (main.js parks him exactly on the car's x/z), so this works whether or
- * not the caller knows he is driving.
+ * The on-foot aim ray. The camera's own sight line is the aim: the reticle marks screen
+ * centre, and the camera's ground yaw is what the mouse turns, so a shot goes where the
+ * reticle points however the body happens to stand. `ctx.camYaw` is that yaw; without it
+ * the body's heading is the fallback, which is what a caller that knows no camera gets.
+ *
+ * The camera rides SHOULDER metres to Rio's right (main.js placeCamera), so its centre
+ * line runs beside him rather than through him: the muzzle is the barrel tip in his right
+ * hand and the shot converges on a point down that centre line, which is why the round
+ * lands under the reticle even though the gun is a body-width off it.
+ */
+const SHOULDER = 0.55;
+const AIM_CONVERGE = 24;
+
+function aimFromCamera(c, ctx) {
+  const yaw = Number.isFinite(ctx.camYaw) ? ctx.camYaw : ctx.heading + Math.PI;
+  // Camera forward on the ground is (-sin yaw, -cos yaw), its right (cos yaw, -sin yaw).
+  const fx = -Math.sin(yaw);
+  const fz = -Math.cos(yaw);
+  const rx = Math.cos(yaw);
+  const rz = -Math.sin(yaw);
+  const m = (WEAPONS[c.weapon] || WEAPONS.pistol).muzzle;
+  // The barrel sits 0.37 m to the shooter's right of the centreline (render.js
+  // syncGuns), swung to the camera's yaw: the body turns with the aim.
+  const from = { x: ctx.x + rx * 0.37 + fx * m, y: 1.35, z: ctx.z + rz * 0.37 + fz * m };
+  // The point the reticle covers: the camera's centre line, SHOULDER out to the right.
+  const px = ctx.x + rx * SHOULDER + fx * AIM_CONVERGE;
+  const pz = ctx.z + rz * SHOULDER + fz * AIM_CONVERGE;
+  const dx = px - from.x;
+  const dz = pz - from.z;
+  const d = Math.hypot(dx, dz);
+  // ox/oz: where the cone is measured from — the camera's own centre line, so "inside the
+  // cone" means "within that many degrees of the reticle", not of the body.
+  const ox = ctx.x + rx * SHOULDER;
+  const oz = ctx.z + rz * SHOULDER;
+  if (d < 0.001) return { from, ox, oz, fx, fz };
+  return { from, ox, oz, fx: dx / d, fz: dz / d };
+}
+
+/**
+ * The aim ray for one shot: on foot the camera's sight line (aimFromCamera); from behind
+ * the wheel the chosen drive-by method. Drive-by is detected from the car Rio is sitting
+ * on (main.js parks him exactly on the car's x/z), so this works whether or not the
+ * caller knows he is driving.
  */
 function aimRay(c, ctx) {
   const car = ctx.car || carUnderPlayer(ctx.driving ? ctx.driving : null, ctx.x, ctx.z);
@@ -379,16 +425,7 @@ function aimRay(c, ctx) {
     if (DRIVEBY === 'local') return driveByLocal(c2);
     return driveByHybrid(c.renderer, c2);
   }
-  const fx = Math.sin(ctx.heading);
-  const fz = Math.cos(ctx.heading);
-  const m = (WEAPONS[c.weapon] || WEAPONS.pistol).muzzle;
-  // The barrel is in the right hand, 0.37 m to the shooter's right of the centreline
-  // (render.js syncGuns): the muzzle — and the flash and tracer that start there —
-  // sit on the gun, not on the body centreline. Local +X under heading h is world
-  // (cos h, 0, -sin h).
-  const rx = Math.cos(ctx.heading) * 0.37;
-  const rz = -Math.sin(ctx.heading) * 0.37;
-  return { from: { x: ctx.x + rx + fx * m, y: 1.35, z: ctx.z + rz + fz * m }, fx, fz };
+  return aimFromCamera(c, ctx);
 }
 
 /** Rotate a heading's (fx, fz) by `a` radians — the pattern/spread offset for one pellet. */
@@ -418,6 +455,12 @@ export function firePistol(c, ctx) {
   c.cooldown = def.cooldown;
   c.shotsFired += 1;
   const ray = aimRay(c, ctx);
+  const cone = coneOf(def);
+  // The cone is measured from the ray's own origin (on foot: the camera's centre line),
+  // so a target under the reticle is inside it at any distance — a cone taken from Rio's
+  // body would let a 0.55 m shoulder offset swallow a close target that the reticle is
+  // squarely on.
+  const origin = ray.ox !== undefined ? ray : { ox: ctx.x, oz: ctx.z };
   const segs = [];
   // One hit roll per pellet: the shotgun throws a fan of them, the others a single ray.
   let hits = 0;
@@ -434,17 +477,17 @@ export function firePistol(c, ctx) {
     let best = null;
     let bd = Infinity;
     const consider = (obj, maxD, maxAngle, kind) => {
-      const dx = obj.x - ctx.x;
-      const dz = obj.z - ctx.z;
+      const dx = obj.x - origin.ox;
+      const dz = obj.z - origin.oz;
       const dist = Math.hypot(dx, dz);
       if (dist > maxD || dist >= bd) return;
       if (angleTo(d.fx, d.fz, dx, dz) > maxAngle) return;
       best = { obj, d: dist, kind };
       bd = dist;
     };
-    for (const h of c.hostiles) if (!h.down) consider(h, def.range, def.spread + 0.45, 'hostile');
-    if (!best) for (const p of ctx.peds || []) if (!p.down) consider(p, def.range, def.spread + 0.45, 'ped');
-    if (!best) for (const car of ctx.trafficCars || []) consider(car, def.range * 0.8, def.spread + 0.35, 'car');
+    for (const h of c.hostiles) if (!h.down) consider(h, def.range, cone, 'hostile');
+    if (!best) for (const p of ctx.peds || []) if (!p.down) consider(p, def.range, cone, 'ped');
+    if (!best) for (const car of ctx.trafficCars || []) consider(car, def.range * 0.8, cone, 'car');
     const to = best
       ? { x: best.obj.x, y: 1.2, z: best.obj.z }
       : { x: ray.from.x + d.fx * def.range, y: ray.from.y, z: ray.from.z + d.fz * def.range };

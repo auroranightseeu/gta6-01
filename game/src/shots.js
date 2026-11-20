@@ -204,11 +204,11 @@ function stageShoot(game) {
   game.player.heading = Math.PI;
   game.player.mesh.position.set(-25, 0, -52);
   game.player.mesh.rotation.y = Math.PI;
-  // Three-quarter angle from the right-rear (WJ item 3): dead-rear (camYaw 0) hides
-  // the gun behind Rio's torso, so the frame proved shooting only via the HUD. At
-  // 0.7 the raised grip, the weapon, the muzzle flash at the barrel tip and the
-  // tracer toward the rivals are all visible, with the rivals in frame beyond him.
-  game.camYaw = 0.7;
+  // Aim down the street: the shot follows the camera's sight line now, so the camera has
+  // to look at the rivals (camYaw PI = down -z, the way Rio faces) or the tracer leaves
+  // the barrel sideways. The over-the-shoulder camera keeps his head clear of the reticle
+  // and the muzzle flash reads at the barrel tip, so the gun is still visible.
+  game.camYaw = Math.PI;
   game.camPitch = 0.22;
   game.wanted = 2;
   game.hint = 'Mouse aim · LMB fire · R reload · 1/2/3 weapon · P pause';
@@ -221,6 +221,9 @@ function stageShoot(game) {
   spawnHostiles(game.combat, -25, -66, 3);
   const ctx = {
     x: game.player.x, z: game.player.z, heading: game.player.heading,
+    // On foot the shot follows the camera's sight line, so the staged frame must aim the
+    // camera at the rivals or the tracer would leave down the body's heading instead.
+    camYaw: game.camYaw,
     peds: game.traffic.peds, trafficCars: game.traffic.cars,
     sanctioned: true, driving: false, time: 0,
   };

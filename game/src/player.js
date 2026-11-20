@@ -12,7 +12,18 @@ export function createPlayer(renderer, x, z) {
     // v5: which gun Rio is holding ('' = hands down) and a short recoil timer so the arm
     // kicks up when a shot goes off. Purely cosmetic — combat.js owns the real state.
     armed: 'pistol', recoil: 0, aim: 0,
+    // Aiming on foot: the body turns to face where the camera looks, so the figure aims
+    // down the reticle instead of at whatever direction he last walked. `aimHold` keeps
+    // that facing for a beat after the last shot.
+    aimYaw: Math.PI, aimHold: 0,
   };
+}
+
+/** Face the camera's aim for `hold` seconds: heading = the camera's forward. */
+export function aimAtCamera(p, camYaw, hold = 0.9) {
+  if (!Number.isFinite(camYaw)) return;
+  p.aimYaw = camYaw + Math.PI;
+  p.aimHold = Math.max(p.aimHold || 0, hold);
 }
 
 /** Tell Rio which weapon he is carrying so the arm pose matches (combat.js calls this). */
@@ -51,14 +62,23 @@ export function updatePlayer(p, dt, wish, run, camYaw, city) {
     p.vz *= 0.4;
   }
   p.moving = Math.hypot(p.vx, p.vz) > 0.4;
-  if (p.moving) {
+  if (p.aimHold > 0) p.aimHold -= dt;
+  if (p.aimHold > 0) {
+    // Aiming: the body turns to the camera's yaw, so the gun — and the muzzle the
+    // tracer leaves from — point where the reticle does. Walking overrides it only
+    // once the aim hold has run out.
+    let d = p.aimYaw - p.heading;
+    while (d > Math.PI) d -= Math.PI * 2;
+    while (d < -Math.PI) d += Math.PI * 2;
+    p.heading += d * Math.min(1, dt * 14);
+  } else if (p.moving) {
     const target = Math.atan2(p.vx, p.vz);
     let d = target - p.heading;
     while (d > Math.PI) d -= Math.PI * 2;
     while (d < -Math.PI) d += Math.PI * 2;
     p.heading += d * Math.min(1, dt * 12);
-    p.phase += dt * Math.hypot(p.vx, p.vz) * 1.6;
   }
+  if (p.moving) p.phase += dt * Math.hypot(p.vx, p.vz) * 1.6;
   if (p.invulnerable > 0) p.invulnerable -= dt;
   if (p.recoil > 0) p.recoil = Math.max(0, p.recoil - dt * 1.6);
   const swing = p.moving ? Math.sin(p.phase) * 0.55 : 0;
