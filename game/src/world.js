@@ -206,3 +206,54 @@ export function dist2(ax, az, bx, bz) {
   const dz = az - bz;
   return dx * dx + dz * dz;
 }
+
+// --- Place names (HUD) --------------------------------------------------------------
+// Six districts, tested in this order, and the street grid's names. The rules are data,
+// not drawing, so the HUD and any future minimap label agree on one answer.
+// Downtown is the centre diamond (|x| + |z| <= 50, which is also the landmark block at
+// -50,0); Lighthouse Point claims the south-west sea corner before Harbor does; the
+// Promenade runs along the south beach; Harbor is the rest of the west edge; Old Town is
+// the north-east quarter; everything else is Residential.
+const AVENUE_NAMES = {
+  '-125': 'Lighthouse Way', '-75': 'Harbor Blvd', '-25': 'Solmar Ave',
+  25: 'Coral Ave', 75: 'Sunset Blvd', 125: 'Marina Dr',
+};
+const STREET_NAMES = {
+  '-125': 'Northgate St', '-75': 'Market St', '-25': 'Central St',
+  25: 'Plaza St', 75: 'Promenade St', 125: 'Beachfront Ave',
+};
+
+/** District name for a world position (see the order above). */
+export function districtAt(x, z) {
+  const ax = Math.abs(x);
+  const az = Math.abs(z);
+  if (ax + az <= 50) return 'Downtown';
+  if (x <= -70 && z <= -40) return 'Lighthouse Point';
+  if (z >= 60) return 'Promenade';
+  if (x <= -50) return 'Harbor';
+  if (x >= 50 && z <= -20) return 'Old Town';
+  return 'Residential';
+}
+
+/**
+ * Nearest road centreline to `v`. A position exactly between two roads (x = 0 is 25 m
+ * from both -25 and 25) is a tie, and a tie is broken toward the LARGER coordinate so the
+ * answer is stable and never depends on the loop order.
+ */
+function nearestRoad(v) {
+  let best = CITY.roadLines[0];
+  let bestD = Math.abs(best - v);
+  for (const line of CITY.roadLines) {
+    const d = Math.abs(line - v);
+    if (d < bestD || (d === bestD && line > best)) {
+      best = line;
+      bestD = d;
+    }
+  }
+  return best;
+}
+
+/** "Solmar Ave & Central St": the avenue (x) and street (z) a position sits nearest. */
+export function streetAt(x, z) {
+  return `${AVENUE_NAMES[nearestRoad(x)]} & ${STREET_NAMES[nearestRoad(z)]}`;
+}

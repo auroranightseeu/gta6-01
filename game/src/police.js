@@ -315,7 +315,16 @@ export function createPolice(renderer) {
     px: 0, pz: 0, vx: 0, vz: 0, seeded: false,
   };
   Object.assign(heli, buildHeli(renderer));
-  return { cars: [], roadblockCars: [], roadblockLevel: 0, renderer, hiddenTimer: 0, heli };
+  return { cars: [], roadblockCars: [], roadblockLevel: 0, renderer, hiddenTimer: 0, heli, nextCallsign: 0 };
+}
+
+// Radio callsigns, one per cruiser: "1-ADAM" through "5-EDWARD" and then plain numbers.
+const CALLSIGN_WORDS = ['ADAM', 'BOY', 'CHARLES', 'DAVID', 'EDWARD'];
+
+function callsignFor(n) {
+  const word = CALLSIGN_WORDS[n % CALLSIGN_WORDS.length];
+  const unit = Math.floor(n / CALLSIGN_WORDS.length) + 1;
+  return `${unit}-${word}`;
 }
 
 /** Make one police car at (x, z) and add it to the chase list. */
@@ -325,6 +334,11 @@ export function spawnPoliceCar(police, x, z, city) {
   const car = {
     x, z, heading: 0, speed: 0, mesh, phase: Math.random() * 2,
     lastDist: Infinity, stuckT: 0, stuckCheck: 0, detourT: 0, detourSide: 1,
+    // Radio callsign for the HUD, handed out in spawn order and kept for the car's
+    // life so the panel does not rename a unit mid-chase.
+    callsign: callsignFor(police.nextCallsign++),
+    police: true,
+    type: 'sedan',
   };
   resolveCircle(car, 1.7, city);
   mesh.position.set(car.x, 0, car.z);
@@ -340,6 +354,7 @@ export function clearPolice(police) {
   police.roadblockCars.length = 0;
   police.roadblockLevel = 0;
   police.hiddenTimer = 0;
+  police.nextCallsign = 0;
   const h = police.heli;
   if (h) {
     h.active = false;
@@ -820,4 +835,32 @@ export function updatePolice(police, ctx, dt) {
   if (wanted > 0 && !ctx.driving && nearest < POLICE.bustDist && Math.abs(ctx.speed || 0) < POLICE.bustSpeed) {
     ctx.onBusted();
   }
+}
+
+/**
+ * Fill `out` with what the police panel shows: the closest unit's callsign and range,
+ * how many cruisers are on Rio, and a one-word status. Written into a caller-owned
+ * object because it runs every frame.
+ *   pursuing — a unit is inside sight range or the air unit has the light on Rio
+ *   searching — units are out but Rio is out of sight, so the stars are cooling
+ *   clear     — nothing to report
+ */
+export function policeHud(police, ctx, out) {
+  let nearest = Infinity;
+  let unit = null;
+  for (const car of police.cars) {
+    const d = Math.hypot(car.x - ctx.x, car.z - ctx.z);
+    if (d < nearest) {
+      nearest = d;
+      unit = car;
+    }
+  }
+  const heliOn = !!(police.heli && police.heli.active);
+  out.callsign = unit ? (unit.callsign || 'UNIT') : '';
+  out.distance = Number.isFinite(nearest) ? Math.round(nearest) : 0;
+  out.units = police.cars.length;
+  out.heli = heliOn;
+  const pursuit = ctx.wanted > 0 && (heliOn || nearest < POLICE.sightDist);
+  out.status = ctx.wanted <= 0 ? 'clear' : pursuit ? 'pursuing' : 'searching';
+  return out;
 }

@@ -164,3 +164,82 @@ export function beginMission(m, i) {
   m.hostilesDown = 0;
   return def.intro;
 }
+
+// --- HUD data -----------------------------------------------------------------------
+// The mission panel, the objective's "NEXT" line and the dialogue box all read the same
+// three answers, derived from state so nothing extra has to be saved. Everything is
+// written into a caller-owned object: this runs once per frame and must not allocate.
+const FIXER = 'Ana Deluca';
+
+/** Strip the "Ana: " speaker prefix off a dialogue line. */
+function spoken(line) {
+  const text = String(line || '');
+  const cut = text.indexOf(': ');
+  return cut > 0 && cut < 12 ? text.slice(cut + 2) : text;
+}
+
+/** Stage label for the current mission state. */
+function stageLabel(m, def) {
+  if (!def) return 'All jobs done';
+  if (def.target2 && m.stage === 'deliver') return 'Deliver';
+  if (m.index === 2) return 'Evade';
+  if (m.index === 4 && m.stage === 'defend') return 'Defend';
+  return 'Go';
+}
+
+/** The one thing to do next, short enough for a HUD line. A target with no label of its
+ *  own (the getaway corner, the docks) gets a plain-words fallback so the line never
+ *  reads as the vague "reach the marker". */
+const TARGET_FALLBACK = {
+  3: 'the south-west corner',
+  4: 'the docks',
+  2: 'the cops',
+};
+
+function nextLine(m, def) {
+  if (!def) return 'Solmar is yours — free roam';
+  if (def.target2 && m.stage === 'deliver') {
+    return `Deliver to ${def.target2.label || 'the drop-off'}`;
+  }
+  if (m.index === 2) return 'Lose the cops — wanted back to zero';
+  if (m.index === 4 && m.stage === 'defend') {
+    return `Take down the rivals (${m.hostilesDown}/3)`;
+  }
+  const label = (def.target && def.target.label) || TARGET_FALLBACK[m.index] || 'the marker';
+  return `Reach ${label}`;
+}
+
+/** How far along the chain the run is, 0..1, counting the current leg's progress. */
+function chainProgress(m, def) {
+  if (!def) return 1;
+  const leg = def.target2 && m.stage === 'deliver' ? 0.65
+    : m.stage === 'defend' ? 0.65
+      : m.stage === 'deliver' ? 0.65 : 0.25;
+  return Math.min(1, (m.index + leg) / MISSIONS.length);
+}
+
+/**
+ * Fill `out` with everything the HUD needs about the mission: title, stage label, the
+ * NEXT objective, chain progress and the fixer's current line. Returns `out`.
+ */
+export function missionHud(m, out) {
+  const def = currentMission(m);
+  const target = missionTarget(m);
+  out.title = def ? def.name : 'Free roam';
+  out.stage = stageLabel(m, def);
+  out.next = nextLine(m, def);
+  out.progress = chainProgress(m, def);
+  out.index = Math.min(m.index, MISSIONS.length);
+  out.total = MISSIONS.length;
+  out.speaker = FIXER;
+  let line = 'Solmar is yours, Rio. Go enjoy the sun.';
+  if (def) {
+    if (def.target2 && m.stage === 'deliver') line = def.pickupLine || def.intro;
+    else if (m.index === 4 && m.stage === 'defend') line = def.defendLine || def.intro;
+    else if (m.index === 2) line = def.intro;
+    else line = def.intro;
+  }
+  out.line = spoken(line);
+  out.targetLabel = target && target.label ? target.label : '';
+  return out;
+}

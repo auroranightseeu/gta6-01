@@ -153,9 +153,45 @@ export function createCar(renderer, x, z, heading, color, type = 'sedan') {
     // v5 damage state (plain fields, see CONTRACTS.md).
     damage: 0, health: 100, exploded: false, explosionAt: -99,
     renderer, fx: null,
+    // Body style, kept as data so the HUD can name the car Rio is in.
+    type,
   };
   ALL_CARS.push(car);
   return car;
+}
+
+// Display names per body style, and the odd one out: a cruiser is a sedan hull with a
+// livery, so the vehicle panel names it by its job and never by its body.
+const TYPE_NAMES = { sedan: 'Solano Sedan', sports: 'Vela GT', van: 'Cargo Van', pickup: 'Baja Pickup' };
+
+/** Human name for a car: police first, then body style, then a safe default. */
+export function carName(car) {
+  if (!car) return '';
+  if (car.police) return 'Police Cruiser';
+  return TYPE_NAMES[car.type] || TYPE_NAMES.sedan;
+}
+
+/**
+ * Fill `out` with the vehicle panel's data for the car Rio is in: name, damage bar
+ * (0..100 = condition), speed in km/h and fuel of the damage model's thresholds.
+ * Returns `out`; `none` marks the on-foot case.
+ */
+export function vehicleHud(car, out) {
+  if (!car) {
+    out.name = '';
+    out.condition = 100;
+    out.speed = 0;
+    out.damage = 0;
+    out.none = true;
+    return out;
+  }
+  const health = carHealth(car);
+  out.name = carName(car);
+  out.condition = Math.round(health);
+  out.damage = Math.round(Math.max(0, Math.min(DMG.max, car.damage || 0)));
+  out.speed = Math.round(Math.abs(car.speed || 0) * 3.6);
+  out.none = false;
+  return out;
 }
 
 /** Tick every car's damage FX. Cheap (an undamaged car with no fx exits immediately) and

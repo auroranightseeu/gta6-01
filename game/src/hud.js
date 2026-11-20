@@ -19,6 +19,278 @@ function setText(node, text) {
   if (node && node.textContent !== text) node.textContent = text;
 }
 
+// --- v6 panels ----------------------------------------------------------------------
+// Mission, police, vehicle, district/street and the dialogue box. They are ADDED around
+// the existing HUD nodes rather than replacing them, so every v5 element (banner,
+// minimap, health, ammo, speed, weapons, objective, hint) keeps its node, its position
+// and its update path. Layout: the right column already holds the minimap, so the place
+// line sits under it and the three stat panels stack beneath the weapon chips.
+const PANEL_CSS = [
+  /* One stack down the right edge: the minimap (12..196), the weapon chips at their own
+     index.html position (210..302, untouched), then the place line and the three panels.
+     The chips cannot move, so the place line starts under them rather than under the map. */
+  '#hud-place,#hud-mission,#hud-police,#hud-vehicle{position:absolute;right:12px;width:198px;box-sizing:border-box;',
+  'padding:7px 10px;border-radius:8px;background:rgba(10,16,24,.55);font-size:13px;line-height:1.35;}',
+  '#hud-place{top:306px;text-align:right;line-height:1.3;}',
+  /* Gaps of 10 px: a panel that grows by a wrapped line never touches the next one. */
+  '#hud-mission{top:366px}#hud-police{top:470px}#hud-vehicle{top:526px}',
+  '.hp-head{display:flex;justify-content:space-between;align-items:baseline;gap:8px;font-size:10px;',
+  'letter-spacing:.14em;color:#8fa0b3;text-transform:uppercase;font-weight:700;}',
+  '.hp-title{margin-top:2px;font-size:15px;font-weight:700;color:#f2f5f8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+  '.hp-next{display:flex;gap:6px;margin-top:2px;color:#c3cedb;font-size:12px;line-height:1.35;}',
+  '.hp-next b{color:#ffc93c;text-transform:uppercase;letter-spacing:.06em;flex:0 0 auto;font-size:11px;padding-top:1px;}',
+  '.hp-row{display:flex;justify-content:space-between;gap:8px;color:#c3cedb;font-variant-numeric:tabular-nums;}',
+  '.hp-row b{color:#ffc93c;font-weight:700;}',
+  '.hp-bar{height:5px;margin-top:5px;border-radius:3px;background:rgba(0,0,0,.45);',
+  'box-shadow:inset 0 0 0 1px rgba(255,255,255,.16);overflow:hidden;}',
+  '.hp-bar i{display:block;height:100%;width:0;border-radius:3px;background:#4fc3f7;transition:width .2s linear;}',
+  '#hud-vehicle .hp-bar i{background:#4cd07d;}#hud-vehicle .hp-bar i.low{background:#f0b429;}',
+  '#hud-vehicle .hp-bar i.critical{background:#ff5544;}',
+  '#hud-place b{display:block;font-size:14px;letter-spacing:.04em;color:#ffd166;}',
+  '#hud-place span{color:#c3cedb;}',
+  '#hud-dialog{position:absolute;left:50%;bottom:100px;transform:translateX(-50%);display:flex;gap:10px;',
+  'align-items:flex-start;width:392px;padding:8px 12px;border-radius:10px;',
+  'background:rgba(10,16,24,.68);border:1px solid rgba(255,255,255,.14);}',
+  '#hud-portrait{width:56px;height:56px;border-radius:8px;background:#182130;',
+  'box-shadow:0 0 0 1px rgba(255,255,255,.18);flex:0 0 auto;}',
+  '.hd-body{min-width:0;}',
+  '.hd-name{display:block;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#ffc93c;font-weight:700;}',
+  '.hd-line{margin:3px 0 0;font-size:13px;line-height:1.4;color:#e7edf3;}',
+].join('');
+
+function panelStyle() {
+  if (document.getElementById('hud-panel-style')) return;
+  const style = document.createElement('style');
+  style.id = 'hud-panel-style';
+  style.textContent = PANEL_CSS;
+  document.head.appendChild(style);
+}
+
+function mk(tag, cls, parent) {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  if (parent) parent.appendChild(node);
+  return node;
+}
+
+function buildPanels(root) {
+  panelStyle();
+  const mission = mk('div', 'hpanel', root);
+  mission.id = 'hud-mission';
+  const missionHead = mk('div', 'hp-head', mission);
+  mk('span', '', missionHead).textContent = 'Mission';
+  const missionCount = mk('span', '', missionHead);
+  const missionTitle = mk('div', 'hp-title', mission);
+  const missionNextRow = mk('div', 'hp-next', mission);
+  const missionStage = mk('b', '', missionNextRow);
+  const missionNext = mk('span', '', missionNextRow);
+  const missionBarFill = mk('i', '', mk('div', 'hp-bar', mission));
+
+  const police = mk('div', 'hpanel', root);
+  police.id = 'hud-police';
+  const policeHead = mk('div', 'hp-head', police);
+  mk('span', '', policeHead).textContent = 'Police';
+  const policeStatus = mk('span', '', policeHead);
+  const policeRow = mk('div', 'hp-row', police);
+  const policeUnit = mk('b', '', policeRow);
+  const policeRange = mk('span', '', policeRow);
+
+  const vehicle = mk('div', 'hpanel', root);
+  vehicle.id = 'hud-vehicle';
+  const vehicleHead = mk('div', 'hp-head', vehicle);
+  mk('span', '', vehicleHead).textContent = 'Vehicle';
+  const vehicleSpeed = mk('span', '', vehicleHead);
+  const vehicleName = mk('div', 'hp-title', vehicle);
+  const vehicleBar = mk('div', 'hp-bar', vehicle);
+  const vehicleFill = mk('i', '', vehicleBar);
+
+  const place = mk('div', '', root);
+  place.id = 'hud-place';
+  const placeDistrict = mk('b', '', place);
+  const placeStreet = mk('span', '', place);
+
+  const dialog = mk('div', '', root);
+  dialog.id = 'hud-dialog';
+  const portrait = mk('canvas', '', dialog);
+  portrait.id = 'hud-portrait';
+  portrait.width = 112;
+  portrait.height = 112;
+  const body = mk('div', 'hd-body', dialog);
+  const speaker = mk('span', 'hd-name', body);
+  const line = mk('p', 'hd-line', body);
+
+  return {
+    dialog,
+    missionCount, missionTitle, missionStage, missionNext, missionBar: missionBarFill,
+    policeStatus, policeUnit, policeRange,
+    vehicleSpeed, vehicleName, vehicleFill,
+    placeDistrict, placeStreet,
+    portrait, speaker, line,
+  };
+}
+
+/** FNV-1a: a stable small hash so a name always draws the same face. */
+function hashName(text) {
+  let h = 2166136261;
+  for (let i = 0; i < text.length; i += 1) {
+    h ^= text.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+const SKIN = ['#e8b48c', '#c98f68', '#8d5a3c', '#f0c8a6', '#b87c55'];
+const HAIR = ['#2b2118', '#5a3a22', '#141419', '#8a4b2a', '#6d6a63'];
+const SHIRT = ['#2f4858', '#7a2f3c', '#315c46', '#4a3a63', '#8a6a2f'];
+
+/**
+ * Draw a procedural portrait: canvas only, no image file, no URL, no font. The face is a
+ * handful of ellipses coloured from the name's hash, so Ana Deluca always looks the same
+ * and a second speaker would look different. 56 CSS px at 2x backing store.
+ */
+function drawPortrait(canvas, name) {
+  const g = canvas.getContext('2d');
+  if (!g) return;
+  const n = hashName(name || 'fixer');
+  const skin = SKIN[n % SKIN.length];
+  const hair = HAIR[(n >> 4) % HAIR.length];
+  const shirt = SHIRT[(n >> 9) % SHIRT.length];
+  const wide = ((n >> 13) % 3) - 1;
+  const w = canvas.width;
+  const h = canvas.height;
+  g.clearRect(0, 0, w, h);
+  const bg = g.createLinearGradient(0, 0, 0, h);
+  bg.addColorStop(0, '#25344a');
+  bg.addColorStop(1, '#111823');
+  g.fillStyle = bg;
+  g.fillRect(0, 0, w, h);
+  g.fillStyle = shirt;
+  g.beginPath();
+  g.moveTo(w * 0.06, h);
+  g.quadraticCurveTo(w * 0.5, h * 0.60, w * 0.94, h);
+  g.closePath();
+  g.fill();
+  g.fillStyle = skin;
+  g.fillRect(w * 0.42, h * 0.54, w * 0.16, h * 0.14);
+  g.beginPath();
+  g.ellipse(w * 0.5, h * 0.45, w * 0.27, h * 0.30, 0, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = hair;
+  g.beginPath();
+  g.ellipse(w * 0.5, h * 0.30, w * 0.29, h * 0.22, 0, Math.PI, 0, false);
+  g.fill();
+  g.beginPath();
+  g.ellipse(w * 0.5, h * 0.40, w * 0.29, h * 0.14, 0, Math.PI * 1.06, Math.PI * 1.94, false);
+  g.fill();
+  g.fillStyle = skin;
+  g.beginPath();
+  g.ellipse(w * 0.21, h * 0.47, w * 0.05, h * 0.06, 0, 0, Math.PI * 2);
+  g.ellipse(w * 0.79, h * 0.47, w * 0.05, h * 0.06, 0, 0, Math.PI * 2);
+  g.fill();
+  g.fillStyle = '#1b1f26';
+  g.beginPath();
+  g.ellipse(w * (0.41 + wide * 0.01), h * 0.44, w * 0.035, h * 0.03, 0, 0, Math.PI * 2);
+  g.ellipse(w * (0.59 + wide * 0.01), h * 0.44, w * 0.035, h * 0.03, 0, 0, Math.PI * 2);
+  g.fill();
+  g.strokeStyle = 'rgba(30,24,20,.55)';
+  g.lineWidth = w * 0.012;
+  g.beginPath();
+  g.moveTo(w * (0.36 + wide * 0.01), h * 0.375);
+  g.lineTo(w * (0.46 + wide * 0.01), h * 0.365);
+  g.moveTo(w * (0.54 + wide * 0.01), h * 0.365);
+  g.lineTo(w * (0.64 + wide * 0.01), h * 0.375);
+  g.stroke();
+  g.beginPath();
+  g.moveTo(w * 0.5, h * 0.47);
+  g.lineTo(w * 0.485, h * 0.545);
+  g.lineTo(w * 0.52, h * 0.55);
+  g.stroke();
+  g.strokeStyle = '#8a3f3a';
+  g.lineWidth = w * 0.016;
+  g.beginPath();
+  g.moveTo(w * 0.44, h * 0.615);
+  g.quadraticCurveTo(w * 0.5, h * 0.645, w * 0.56, h * 0.615);
+  g.stroke();
+  g.fillStyle = 'rgba(255,255,255,.05)';
+  g.fillRect(0, 0, w, h * 0.12);
+}
+
+/** Pooled panel cache: written into each frame, compared before touching the DOM. */
+function panelCache() {
+  return {
+    count: '', title: '', stage: '', next: '', bar: -1,
+    status: '', unit: '', range: '',
+    vehSpeed: '', vehName: '', vehFill: -1, vehClass: '',
+    district: '', street: '', speaker: '', line: '', drawnFor: '',
+  };
+}
+
+/** Write `text` into `node` only when the cached value changed. */
+function put(cache, key, node, text) {
+  const value = text == null ? '' : String(text);
+  if (cache[key] === value) return false;
+  cache[key] = value;
+  if (node) node.textContent = value;
+  return true;
+}
+
+function renderMaps(nodes, cache, state) {
+  // The place line reads state.place: main.js computes it from world.js, which keeps this
+  // file a pure renderer and keeps the dossier's import walk unchanged.
+  const place = state.place || null;
+  if (place) {
+    put(cache, 'district', nodes.placeDistrict, place.district || '');
+    put(cache, 'street', nodes.placeStreet, place.street || '');
+  }
+  const mission = state.mission || null;
+  if (mission) {
+    put(cache, 'count', nodes.missionCount, `${mission.index}/${mission.total}`);
+    put(cache, 'title', nodes.missionTitle, mission.title);
+    put(cache, 'stage', nodes.missionStage, mission.stage);
+    put(cache, 'next', nodes.missionNext, mission.next);
+    const pct = Math.round(Math.max(0, Math.min(1, mission.progress || 0)) * 100);
+    if (pct !== cache.bar) {
+      cache.bar = pct;
+      nodes.missionBar.style.width = `${pct}%`;
+    }
+    if (put(cache, 'speaker', nodes.speaker, mission.speaker || '')) {
+      drawPortrait(nodes.portrait, mission.speaker || '');
+    }
+    put(cache, 'line', nodes.line, mission.line || '');
+  }
+  const police = state.policeInfo || null;
+  if (police) {
+    const label = police.status === 'pursuing' ? 'PURSUING'
+      : police.status === 'searching' ? 'SEARCHING' : 'CLEAR';
+    put(cache, 'status', nodes.policeStatus, label);
+    if (cache.status !== label) {
+      nodes.policeStatus.style.color = police.status === 'pursuing' ? '#ff8a8a'
+        : police.status === 'searching' ? '#ffd166' : '#7d8590';
+    }
+    put(cache, 'unit', nodes.policeUnit, police.callsign || (police.units ? `${police.units} units` : '—'));
+    const range = police.units
+      ? `${police.distance} m${police.heli ? ' · air' : ''}`
+      : (police.heli ? 'air only' : 'no units');
+    put(cache, 'range', nodes.policeRange, range);
+  }
+  const v = state.vehicle || null;
+  if (v) {
+    put(cache, 'vehName', nodes.vehicleName, v.none ? 'On foot' : v.name);
+    put(cache, 'vehSpeed', nodes.vehicleSpeed, v.none ? '' : `${v.speed} km/h`);
+    const cond = Math.max(0, Math.min(100, v.none ? 100 : v.condition));
+    if (cond !== cache.vehFill) {
+      cache.vehFill = cond;
+      nodes.vehicleFill.style.width = `${cond}%`;
+    }
+    const cls = cond < 25 ? 'critical' : cond < 50 ? 'low' : '';
+    if (cls !== cache.vehClass) {
+      cache.vehClass = cls;
+      nodes.vehicleFill.className = cls;
+    }
+  }
+}
+
+
 export function createHud() {
   const el = (id) => document.getElementById(id);
   const money = el('money');
@@ -57,6 +329,10 @@ export function createHud() {
   };
   const pauseStats = el('pause-stats');
   const overStats = el('over-stats');
+  // The v6 panels are built once and appended to the HUD root, so no index.html edit is
+  // needed and every v5 node above is left exactly where it was.
+  const panels = hud ? buildPanels(hud) : null;
+  const panelState = panelCache();
   let lastPackageCount = -1;
   let lastPackageTotal = -1;
   let lastWeapons = '';
@@ -79,6 +355,9 @@ export function createHud() {
       if (node) node.hidden = key !== name;
     }
     if (hud) hud.hidden = name === 'title';
+    // The new panels live inside #hud, so the title screen hides them with it; the
+    // dialogue box is the one piece that would otherwise sit over a paused card.
+    if (panels) panels.dialog.hidden = name !== null;
     // A screen change can flip the driving flag while the speed number stays
     // put (exiting a stopped car, respawning on foot): force the next update
     // to rewrite the speed panel instead of trusting the number cache, so it
@@ -311,6 +590,7 @@ export function createHud() {
     renderHeli(!!state.heli, state.heliOn);
     renderStats(state.stats);
     drawMinimap(state, city);
+    if (panels) renderMaps(panels, panelState, state);
   }
 
   /** Push the current settings into the pause-screen widgets (never fires a change). */
