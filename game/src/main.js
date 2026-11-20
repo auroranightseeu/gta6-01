@@ -24,7 +24,6 @@ import { createHud } from './hud.js';
 import { createLandmarks } from './landmarks.js';
 import { applyGoldenHour } from './golden-hour.js';
 import { goldenHourSky } from './sky.js';
-import { goldenHourWindows } from './windows.js';
 import { applyGrade } from './grade.js';
 import { createPolice, clearPolice, policeHud, updatePolice } from './police.js';
 import * as combat from './combat.js';
@@ -141,9 +140,7 @@ function buildGame() {
   createLandmarks(city, renderer.scene);
   applyGoldenHour(renderer.scene);
   goldenHourSky(renderer.scene);
-  const windows = goldenHourWindows(city.buildings);
-  if (windows) renderer.scene.add(windows);
-  applyGrade(renderer);
+      applyGrade(renderer);
   const input = createInput(canvas);
   const hud = createHud();
   const player = createPlayer(renderer, SPAWN.x, SPAWN.z);
