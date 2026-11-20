@@ -276,15 +276,15 @@ function showShots(c, segs) {
 }
 
 // --- drive-by aim --------------------------------------------------------------------
-// Two candidate origins for a shot fired from behind the wheel. Both stay in the build as
-// named exports so the measurement harness can score the real functions; DRIVEBY picks the
-// one gameplay uses. Chosen by measurement — see v5/reports/W-C.md.
+// Two candidate origins for a shot fired from behind the wheel. Both stay in the build so
+// the chosen one can be swapped without a rewrite; DRIVEBY picks the one gameplay uses.
+// Chosen by measurement — see v5/reports/W-C.md.
 const DRIVEBY = 'hybrid';
 
 /** A: muzzle fixed in car-local space (right-hand window, just past the B-pillar) with the
  *  shot going along the car's own heading. Cheap, never lags, but the shot follows the
  *  chassis instead of where the camera looks. */
-export function driveByLocal(ctx) {
+function driveByLocal(ctx) {
   const s = Math.sin(ctx.heading);
   const c = Math.cos(ctx.heading);
   const lx = 0.84;   // driver's window, right side of the cabin
@@ -301,7 +301,7 @@ export function driveByLocal(ctx) {
  * flattened, so a shot follows the crosshair and not the camera's downward pitch.
  */
 const _camDir = new THREE.Vector3();
-export function driveByCamera(renderer, ctx) {
+function driveByCamera(renderer, ctx) {
   const cam = renderer && renderer.camera;
   if (!cam) return driveByLocal(ctx);
   cam.updateMatrixWorld();
@@ -332,7 +332,7 @@ export function driveByCamera(renderer, ctx) {
  * the crosshair). Measured: 0 % of tracers cut through the car, 0.0 m aim error, and the
  * muzzle sits within a metre of the real window instead of 9 m behind the camera.
  */
-export function driveByHybrid(renderer, ctx) {
+function driveByHybrid(renderer, ctx) {
   const heading = ctx.heading || 0;
   // Camera yaw when we have a camera (follows the crosshair); else the car's heading.
   let ux = Math.sin(heading);

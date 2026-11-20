@@ -1400,20 +1400,3 @@ function runGame() {
 
 if (shot) runShot(shot);
 else runGame();
-
-// Debug/harness handle: lets the perf probes time a reset and inspect the quality
-// ladder without a second copy of the game logic. It holds no credentials and does
-// nothing on its own, so it is safe to leave in a single-player offline build.
-window.__solmar = {
-  game,
-  resetGame: (fresh) => resetGame(game, fresh),
-  hudState: () => hudState(game),
-  setQuality: (lv) => setQuality(game, lv),
-  sidejobsLoaded: !!side,
-  // Harness hooks for the hit feedback (the smoke test needs to take a hit without
-  // waiting for a rival to walk up). Presentation only.
-  hit: (scale = 1) => hitFeedback(game, scale),
-  shake: () => game.shake,
-  summaryVisible: () => !!(summaryEl && summaryEl.classList.contains('on')),
-  summaryText: () => (summaryEl ? summaryEl.textContent : ''),
-};

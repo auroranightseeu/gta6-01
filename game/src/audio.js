@@ -26,13 +26,11 @@ let musicAllowed = true; // audioSettings({ music }): the settings gate
 let musicPlaying = false;
 
 // Which note scheduler drives the music loop. 'lookahead' is the shipped one;
-// 'raf' is the measured alternative, kept switchable for the A/B harness only.
+// 'raf' is the alternative measured against it.
 let musicMode = 'lookahead';
 
-// Instrumentation for the measurement harness (cheap integer/float counters).
+// Instrumentation counters (cheap integer/float), read only by tests outside game/.
 const stats = {
-  heliBuilds: 0,
-  ambientBuilds: 0,
   musicBuilds: 0,
   musicStarts: 0,
   musicNotes: 0,
@@ -243,7 +241,6 @@ function buildHeli() {
   lfo.start();
   sub.start();
   heli = { out };
-  stats.heliBuilds += 1;
 }
 
 export function setHeli(on) {
@@ -317,7 +314,6 @@ function buildAmbient() {
   cityLfo.start();
   coastLfo.start();
   ambient = { cityGain, coastGain };
-  stats.ambientBuilds += 1;
 }
 
 export function setAmbient(kind) {
@@ -735,51 +731,3 @@ export function sfx(name) {
   }
 }
 
-// --- Harness-only introspection. Nothing in the game calls these. ----------
-export function __audioStats(reset) {
-  const s = {
-    contexts: context ? 1 : 0,
-    state: context ? context.state : 'none',
-    heliBuilds: stats.heliBuilds,
-    ambientBuilds: stats.ambientBuilds,
-    musicBuilds: stats.musicBuilds,
-    musicStarts: stats.musicStarts,
-    musicNotes: stats.musicNotes,
-    musicTicks: stats.musicTicks,
-    musicMs: stats.musicMs,
-    musicPlaying,
-    musicMode,
-    ambientKind,
-    volume,
-    muted,
-    schedN: stats.schedN,
-    schedMean: stats.schedN ? stats.schedSum / stats.schedN : 0,
-    schedSd: stats.schedN
-      ? Math.sqrt(Math.max(0, stats.schedSumSq / stats.schedN - (stats.schedSum / stats.schedN) ** 2))
-      : 0,
-    schedMax: stats.schedMax,
-  };
-  if (reset) {
-    stats.musicNotes = 0;
-    stats.musicTicks = 0;
-    stats.musicMs = 0;
-    stats.schedN = 0;
-    stats.schedSum = 0;
-    stats.schedSumSq = 0;
-    stats.schedMax = 0;
-  }
-  return s;
-}
-
-export function __musicScheduler(mode) {
-  if (mode !== 'lookahead' && mode !== 'raf') return musicMode;
-  try {
-    const was = musicPlaying;
-    stopMusic();
-    musicMode = mode;
-    if (was) startMusic();
-  } catch {
-    // ignore
-  }
-  return musicMode;
-}
