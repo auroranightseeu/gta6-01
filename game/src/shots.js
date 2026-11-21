@@ -277,8 +277,8 @@ function stageShoot(game) {
   game.camYaw = 0;
   // A steeper pitch than the old 0.22. The tracer runs level down the street, so a level
   // camera puts it within a few pixels of screen centre and perspective squashes a 26 m
-  // streak into a 40 px stub; looking down more lifts the muzzle up the frame and lets the
-  // same streak project ~65 px, and the fallen rival reads from above instead of edge-on.
+  // streak into a 40 px stub; looking down more lifts the muzzle up the frame and the same
+  // streak projects ~88 px, and the fallen rival reads from above instead of edge-on.
   game.camPitch = 0.34;
   game.wanted = 2;
   game.hint = 'Mouse aim · LMB fire · R reload · 1/2/3 weapon · P pause';
