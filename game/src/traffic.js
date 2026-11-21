@@ -263,9 +263,13 @@ export function createTraffic(city, random, renderer) {
       lane = pickLane(random);
       along = (random() * 2 - 1) * 120;
     }
+    // Colour is still drawn for every car, including cabs: the cab paints itself yellow
+    // in the mesh, so skipping the roll here would shift the seeded stream and move every
+    // later car, ped and lamp in the city.
     const color = PALETTE.carColors[Math.floor(random() * PALETTE.carColors.length)];
     const typeRoll = random();
-    const type = typeRoll < 0.14 ? 'sports' : typeRoll < 0.25 ? 'van' : typeRoll < 0.36 ? 'pickup' : 'sedan';
+    const type = typeRoll < 0.13 ? 'sports' : typeRoll < 0.23 ? 'van' : typeRoll < 0.33 ? 'pickup'
+      : typeRoll < 0.47 ? 'taxi' : 'sedan';
     const car = createCar(
       renderer,
       lane.vertical ? carX(lane) : along,

@@ -143,8 +143,22 @@ export function allCars() {
   return ALL_CARS;
 }
 
+/**
+ * Two of the ten kerbside bays are cab stands: bays 3 and 7 of the seed-1 city, both on
+ * the beach-side kerb of the x = -125 avenue, which is the corridor the drive and chase
+ * shots look down. main.js builds the bays in order and hands each a body style, so the
+ * stand is recognised here from the bay position and overrides that style. Same bay, same
+ * heading, same count — only the body changes.
+ */
+const TAXI_STANDS = [[-130.4, -88.61], [-130.4, -12.15]];
+function isTaxiStand(x, z) {
+  for (const [sx, sz] of TAXI_STANDS) if (Math.abs(x - sx) < 0.01 && Math.abs(z - sz) < 0.01) return true;
+  return false;
+}
+
 export function createCar(renderer, x, z, heading, color, type = 'sedan') {
-  const mesh = renderer.makeCar(color, type);
+  const body = isTaxiStand(x, z) ? 'taxi' : type;
+  const mesh = renderer.makeCar(color, body);
   renderer.scene.add(mesh);
   mesh.position.set(x, 0, z);
   mesh.rotation.y = heading;
@@ -154,15 +168,16 @@ export function createCar(renderer, x, z, heading, color, type = 'sedan') {
     damage: 0, health: 100, exploded: false, explosionAt: -99,
     renderer, fx: null,
     // Body style, kept as data so the HUD can name the car Rio is in.
-    type,
+    type: body,
   };
   ALL_CARS.push(car);
   return car;
 }
 
 // Display names per body style, and the odd one out: a cruiser is a sedan hull with a
-// livery, so the vehicle panel names it by its job and never by its body.
-const TYPE_NAMES = { sedan: 'Solano Sedan', sports: 'Vela GT', van: 'Cargo Van', pickup: 'Baja Pickup' };
+// livery, so the vehicle panel names it by its job and never by its body. The cab is a
+// body style of its own because its roof sign and paint are part of the mesh.
+const TYPE_NAMES = { sedan: 'Solano Sedan', sports: 'Vela GT', van: 'Cargo Van', pickup: 'Baja Pickup', taxi: 'Solmar Cab' };
 
 /** Human name for a car: police first, then body style, then a safe default. */
 export function carName(car) {

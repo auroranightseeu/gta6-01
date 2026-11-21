@@ -788,6 +788,12 @@ function makePersonMesh(color, style = 0) {
 }
 
 // --- cars (merged body, live wheels) ----------------------------------------------
+/**
+ * Body proportions per type. These are what make a car recognisable at sheet size, where
+ * lamp detail is a few pixels: the coupe is low and long, the van is tall with a flat
+ * roof, the pickup keeps its cabin forward of an open tray, and the cab is a sedan hull
+ * with a roof sign on it.
+ */
 function carProfile(type) {
   return type === 'sports'
     ? { width: 2.02, bodyH: 0.43, length: 4.65, cabinW: 1.48, cabinH: 0.35, cabinL: 1.75, cabinY: 0.89, cabinZ: -0.35, roofW: 1.43, roofL: 1.58, roofY: 1.08, wheelX: 0.93, wheelZ: 1.5, wheelR: 0.31 }
@@ -799,45 +805,173 @@ function carProfile(type) {
 }
 
 const wheelGeoCache = new Map();
-/** One wheel: tyre plus hub in a single geometry, so a car is body + 4 wheels. */
+/**
+ * One wheel: tyre, bright hub disc and five spokes in a single geometry, so a car is
+ * body + lights + 4 wheels. The spokes are geometry, not draws — the whole city's wheels
+ * still cost one draw each. They span the hub's full width so they show on both faces,
+ * which is what keeps a wheel from reading as a plain black disc at shot distance.
+ */
 function wheelGeometry(r) {
   const key = r.toFixed(2);
   if (wheelGeoCache.has(key)) return wheelGeoCache.get(key);
   const tyre = new THREE.CylinderGeometry(r, r, 0.28, 12);
   tyre.rotateZ(Math.PI / 2);
-  const hub = new THREE.CylinderGeometry(0.2, 0.2, 0.31, 12);
+  const hub = new THREE.CylinderGeometry(0.2, 0.2, 0.26, 12);
   hub.rotateZ(Math.PI / 2);
-  const geo = mergeParts([
+  const parts = [
     { geo: tyre, color: 0x111318 },
-    { geo: hub, color: 0xd8d2c1 },
-  ]);
+    { geo: hub, color: 0xf0eadb },
+  ];
+  for (let i = 0; i < 5; i += 1) {
+    const a = (i * Math.PI * 2) / 5;
+    const spoke = new THREE.BoxGeometry(0.3, 0.045, 0.17);
+    spoke.translate(0, 0, 0.085);
+    // Rotate about x: the disc faces lie in the y/z plane after the tyre's own rotation.
+    parts.push({ geo: spoke, matrix: at(0, 0, 0, 0, a), color: 0x9c9484 });
+  }
+  const geo = mergeParts(parts);
   wheelGeoCache.set(key, geo);
   return geo;
 }
 
 const bodyMatCache = new THREE.MeshLambertMaterial({ vertexColors: true });
 
+// --- car lights ---------------------------------------------------------------------
+let glowTexCache = null;
+/** Soft white radial falloff, drawn once and shared by every car's lamp glow. */
+function glowTexture() {
+  if (glowTexCache) return glowTexCache;
+  const c = document.createElement('canvas');
+  c.width = 32;
+  c.height = 32;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(16, 16, 1, 16, 16, 15);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.45, 'rgba(255,255,255,.55)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 32, 32);
+  glowTexCache = srgb(new THREE.CanvasTexture(c));
+  return glowTexCache;
+}
+
+let glowMatCache = null;
+/** Additive, untonemapped, vertex coloured: the lamps read as lit at dusk, not as paint. */
+function glowMaterial() {
+  if (glowMatCache) return glowMatCache;
+  glowMatCache = new THREE.MeshBasicMaterial({
+    map: glowTexture(),
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    vertexColors: true,
+    toneMapped: false,
+  });
+  return glowMatCache;
+}
+
+/**
+ * One merged textured quad mesh holding all four lamp glows of a car: the soft-sprite
+ * look of a glow without four sprites, so a car costs one extra draw for its lights
+ * instead of four. `back` flips the winding for the tail-lamps, which face -z.
+ */
+function carGlowMesh(quads) {
+  const pos = [];
+  const uv = [];
+  const col = [];
+  const CORNER = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]];
+  const UVC = [[0, 0], [1, 0], [1, 1], [0, 1]];
+  for (const q of quads) {
+    const r = ((q.color >> 16) & 255) / 255;
+    const g = ((q.color >> 8) & 255) / 255;
+    const b = (q.color & 255) / 255;
+    const order = q.back ? [0, 2, 1, 0, 3, 2] : [0, 1, 2, 0, 2, 3];
+    for (const i of order) {
+      pos.push(q.x + CORNER[i][0] * q.w, q.y + CORNER[i][1] * q.h, q.z);
+      uv.push(UVC[i][0], UVC[i][1]);
+      col.push(r, g, b);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  geo.computeBoundingSphere();
+  return new THREE.Mesh(geo, glowMaterial());
+}
+
+let taxiSignTexCache = null;
+/** The roof sign's face: a bright yellow plate with TAXI on it, drawn once. */
+function taxiSignTexture() {
+  if (taxiSignTexCache) return taxiSignTexCache;
+  const c = document.createElement('canvas');
+  c.width = 128;
+  c.height = 64;
+  const g = c.getContext('2d');
+  g.fillStyle = '#f7cf1c';
+  g.fillRect(0, 0, 128, 64);
+  g.strokeStyle = '#2b2b2b';
+  g.lineWidth = 5;
+  g.strokeRect(3, 3, 122, 58);
+  g.fillStyle = '#20232a';
+  g.font = 'bold 34px sans-serif';
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.fillText('TAXI', 64, 34);
+  taxiSignTexCache = srgb(new THREE.CanvasTexture(c));
+  return taxiSignTexCache;
+}
+
+/** A yellow cab: the sedan hull in cab paint, plus a lit roof sign on its own draw. */
+const TAXI_PAINT = 0xf2c40c;
+function makeTaxiSign(p) {
+  const sign = new THREE.Mesh(
+    new THREE.BoxGeometry(0.72, 0.26, 0.12),
+    new THREE.MeshBasicMaterial({ map: taxiSignTexture() }),
+  );
+  sign.position.set(0, p.roofY + 0.19, p.cabinZ + 0.12);
+  return sign;
+}
+
 function makeCarMesh(color, type = 'sedan') {
   const group = new THREE.Group();
   const p = carProfile(type);
-  const glass = 0x4a7f91;
+  // Dark cabin glass: the old 0x4a7f91 read as a pale blue block, brighter than the paint.
+  const glass = 0x18222e;
+  const paint = type === 'taxi' ? TAXI_PAINT : color;
   const parts = [
-    { geo: new THREE.BoxGeometry(p.width, p.bodyH, p.length), matrix: at(0, p.bodyH, 0), color },
+    { geo: new THREE.BoxGeometry(p.width, p.bodyH, p.length), matrix: at(0, p.bodyH, 0), color: paint },
+    // Darker rocker under the sills: fake AO that grounds the body on its wheels, so the
+    // paint is not one flat tone from sill to shoulder.
+    { geo: new THREE.BoxGeometry(p.width * 0.97, 0.17, p.length * 0.94), matrix: at(0, p.bodyH * 0.42, 0), color: tintOf(paint, 0.55) },
     { geo: new THREE.BoxGeometry(p.cabinW, p.cabinH, p.cabinL), matrix: at(0, p.cabinY, p.cabinZ), color: glass },
-    { geo: new THREE.BoxGeometry(p.roofW, 0.08, p.roofL), matrix: at(0, p.roofY, p.cabinZ), color },
+    { geo: new THREE.BoxGeometry(p.roofW, 0.08, p.roofL), matrix: at(0, p.roofY, p.cabinZ), color: paint },
   ];
   if (type === 'pickup') {
-    parts.push({ geo: new THREE.BoxGeometry(1.62, 0.18, 1.28), matrix: at(0, 0.83, 1.05), color: 0x41454a });
+    // Open bed: a dark floor, low side walls and a tailgate, so the rear reads as a tray
+    // rather than as a second cabin.
+    parts.push({ geo: new THREE.BoxGeometry(1.62, 0.16, 1.6), matrix: at(0, 0.8, 1.05), color: 0x41454a });
+    for (const sx of [-0.78, 0.78]) {
+      parts.push({ geo: new THREE.BoxGeometry(0.1, 0.34, 1.6), matrix: at(sx, 0.98, 1.05), color: paint });
+    }
+    parts.push({ geo: new THREE.BoxGeometry(1.62, 0.34, 0.1), matrix: at(0, 0.98, 1.85), color: paint });
   }
-  // Head-lamps and tail-lamps are baked in as bright vertex colours: two fewer draws a car.
+  // Head-lamps and tail-lamps are baked in as bright vertex colours, and their glow is
+  // one extra merged mesh below: no point light per car, no sprite per lamp.
+  const lampY = p.bodyH * 1.05;
+  const glows = [];
   for (const lx of [-p.width * 0.32, p.width * 0.32]) {
-    parts.push({ geo: new THREE.BoxGeometry(0.3, 0.14, 0.06), matrix: at(lx, 0.62, p.length / 2 + 0.01), color: 0xfff1bd });
-    parts.push({ geo: new THREE.BoxGeometry(0.3, 0.14, 0.06), matrix: at(lx, 0.62, -p.length / 2 - 0.01), color: 0xd8483a });
+    parts.push({ geo: new THREE.BoxGeometry(0.3, 0.14, 0.06), matrix: at(lx, lampY, p.length / 2 + 0.01), color: 0xfff6d8 });
+    parts.push({ geo: new THREE.BoxGeometry(0.3, 0.14, 0.06), matrix: at(lx, lampY, -p.length / 2 - 0.01), color: 0xe8483a });
+    glows.push({ x: lx, y: lampY, z: p.length / 2 + 0.07, w: 0.66, h: 0.5, color: 0xfff0c0 });
+    glows.push({ x: lx, y: lampY, z: -p.length / 2 - 0.07, w: 0.52, h: 0.4, color: 0xff3b28, back: true });
   }
   const body = new THREE.Mesh(mergeParts(parts), bodyMatCache);
   body.castShadow = true;
   body.receiveShadow = false;
   group.add(body);
+  group.add(carGlowMesh(glows));
+  if (type === 'taxi') group.add(makeTaxiSign(p));
   const wGeo = wheelGeometry(p.wheelR);
   const wheels = [];
   for (const [wx, wz] of [[-p.wheelX, p.wheelZ], [p.wheelX, p.wheelZ], [-p.wheelX, -p.wheelZ], [p.wheelX, -p.wheelZ]]) {
