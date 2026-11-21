@@ -1576,11 +1576,13 @@ function buildPalmGeo(variant = 0) {
       color: i % 2 ? tintOf(PALETTE.palmLeaf, 1.05) : tintOf(PALETTE.palmLeaf, 0.82),
     });
   }
-  // Three small coconuts tucked under the blade bases.
+  // Three small coconuts tucked under the blade bases. A tetrahedron, not an icosahedron:
+  // at 11 cm across they are ~4 px at chase distance, so 20 triangles each (60 of the
+  // crown's 516) buys nothing a 4-triangle shard does not.
   for (let i = 0; i < 3; i += 1) {
     const a = (i * Math.PI * 2) / 3 + 0.4;
     parts.push({
-      geo: new THREE.IcosahedronGeometry(0.11, 0),
+      geo: new THREE.TetrahedronGeometry(0.13, 0),
       matrix: at(cx + Math.cos(a) * 0.2, cy - 0.26, Math.sin(a) * 0.2),
       color: 0x6b4a2a,
     });
