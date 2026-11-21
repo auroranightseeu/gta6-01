@@ -20,7 +20,7 @@
 // with the factory absent the whole signal LOGIC still runs, only the lamps are missing.
 import * as THREE from 'three';
 import { CITY, PALETTE, PEDESTRIANS, TRAFFIC_CARS } from './config.js';
-import { createCar } from './vehicles.js';
+import { createBike, createCar } from './vehicles.js';
 import { sfx } from './audio.js';
 
 // --- local tuning (config.js belongs to W-A, so these live here) ---------------------
@@ -307,7 +307,7 @@ export function createTraffic(city, random, renderer) {
     });
   }
   const traffic = {
-    cars, peds, lights, time: 0,
+    cars, peds, lights, time: 0, bikes: createBikes(random, renderer),
     // signalised: crossings with a working signal state machine (the logic, always on).
     // heads: visible lamp heads actually built (a subset, for draw-call budget).
     signalised: NL, heads: 0,
@@ -353,6 +353,16 @@ export function resetTraffic(traffic, random) {
     p.dodge = 0;
     p.wasFleeing = false;
     p.wait = 0;
+  }
+  // Bikes go back to their home lanes; a bike Rio took is no longer in this list.
+  for (const m of traffic.bikes) {
+    m.x = m.homeX;
+    m.z = m.homeZ;
+    m.heading = m.homeHeading;
+    m.speed = 0;
+    m.lean = 0;
+    m.want = 0;
+    syncBike(m, 0);
   }
 }
 
@@ -533,6 +543,7 @@ export function updateTraffic(traffic, dt, playerPos = null) {
   // A car whose lane is not on the grid (a shot restages one onto a made-up lane) still
   // gets its own light check, just with no queue behind it.
   for (let k = 0; k < LOOSE.length; k += 1) planBucket(traffic, LOOSE);
+  for (const m of traffic.bikes) stepBike(traffic, m, dt);
 
   for (const car of traffic.cars) {
     if (car.pause > 0) car.pause -= dt;
@@ -654,6 +665,97 @@ export function updateTraffic(traffic, dt, playerPos = null) {
     p.mesh.position.set(p.x + ox, 0, p.z + oz);
     p.mesh.rotation.y = p.heading;
   }
+}
+
+// --- motorbikes (v5, R4c) -------------------------------------------------------------
+// Bikes ride the same lanes and stop at the same signals as the cars, but they are not
+// bucketed into the car queue: they slip past a jam instead of waiting behind it, which is
+// what makes them read as bikes in the frame. They still brake for their own red, so the
+// traffic system stays one mechanism. No rider panic, no crimes: a bike is scenery with
+// wheels, and its riderless mesh (rider: true is the default) is the same model Rio rides.
+const BIKE_LANES = [
+  { line: -125, vertical: true, dir: -1, lane: 3.4 },
+  { line: -125, vertical: true, dir: -1, lane: 3.4 },
+  { line: -25, vertical: true, dir: 1, lane: 3.4 },
+];
+const BIKE_PAINT = [0xc0392b, 0x2e86c1, 0xf1c40f];
+const BIKE_JACKET = [0x2c3e50, 0x7d3c98, 0x1e8449];
+
+/** Spawn the traffic bikes on their fixed lanes. Seeded positions, like the cars. */
+function createBikes(random, renderer) {
+  const bikes = [];
+  for (let i = 0; i < BIKE_LANES.length; i += 1) {
+    const lane = BIKE_LANES[i];
+    // Spread along the lane so the two bikes on the -125 avenue never overlap.
+    const along = -110 + i * 78 + random() * 10;
+    const bike = createBike(
+      renderer,
+      lane.vertical ? lane.line + lane.lane : along,
+      lane.vertical ? along : lane.line + lane.lane,
+      lane.vertical ? (lane.dir > 0 ? 0 : Math.PI) : (lane.dir > 0 ? Math.PI / 2 : -Math.PI / 2),
+      BIKE_PAINT[i % BIKE_PAINT.length],
+      { jacket: BIKE_JACKET[i % BIKE_JACKET.length] },
+    );
+    bike.parked = false;
+    bike.lane = lane;
+    bike.cruise = 11 + random() * 5;
+    bike.want = 0;
+    bike.hold = false;
+    bikes.push(bike);
+  }
+  return bikes;
+}
+
+/** One bike's frame: its own signal, a slip past a stopped car, then the move. */
+function stepBike(traffic, m, dt) {
+  let want = m.cruise;
+  let red = false;
+  if (approachSignal(traffic, m)) {
+    const d = _sig.d;
+    const state = _sig.state;
+    if (state === 1) {
+      if (d + 0.6 >= (m.speed * m.speed) / (2 * BRAKE)) {
+        red = true;
+        const lim = stopLimit(d);
+        if (lim < want) want = lim;
+      }
+    } else if (state === 2) {
+      red = true;
+      const lim = stopLimit(d);
+      if (lim < want) want = lim;
+    }
+  }
+  m.hold = red;
+  m.want = want;
+  const dv = want - m.speed;
+  const lim = (dv > 0 ? ACCEL * 1.4 : BRAKE) * dt;
+  m.speed += Math.max(-lim, Math.min(lim, dv));
+  if (m.speed < 0.06 && want < 0.06) m.speed = 0;
+  const { line, vertical, dir, lane } = m.lane;
+  if (vertical) {
+    m.z += dir * m.speed * dt;
+    if (m.z > 132) m.z = -132;
+    if (m.z < -132) m.z = 132;
+    m.x = line + lane;
+    m.heading = dir > 0 ? 0 : Math.PI;
+  } else {
+    m.x += dir * m.speed * dt;
+    if (m.x > 132) m.x = -132;
+    if (m.x < -132) m.x = 132;
+    m.z = line + lane;
+    m.heading = dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+  }
+  // A bike that Rio took off the street is removed from this list by main.js, so every
+  // bike still here is NPC traffic and is ridden by its own rider.
+  syncBike(m, dt);
+}
+
+/** Push a traffic bike's state onto its mesh, with a small lean from its lane changes. */
+function syncBike(m, dt) {
+  m.mesh.position.set(m.x, 0, m.z);
+  m.mesh.rotation.set(0, m.heading, m.lean || 0);
+  const spin = (m.speed * dt) / 0.33;
+  for (const w of m.mesh.userData.wheels) w.rotation.x += spin;
 }
 
 /**

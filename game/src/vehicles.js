@@ -10,6 +10,7 @@ import * as THREE from 'three';
 import { CAR } from './config.js';
 import { resolveCircle } from './world.js';
 import { createRandom } from './random.js';
+import { createMotor, driveMotor, nearestMotor, syncMotor } from './motor.js';
 
 // Local tuning (config.js is owned by W-A, so these stay here).
 const DMG = {
@@ -143,6 +144,38 @@ export function allCars() {
   return ALL_CARS;
 }
 
+// Bikes are kept apart from ALL_CARS: they share the point-with-a-heading model and the
+// car fields the HUD reads, but they drive through motor.js's own physics and must never
+// turn up in a car search (a car list is what the wrench, the garage and the drive-by
+// target scan). Created once at boot, so the registry never grows.
+const ALL_BIKES = [];
+
+/** Every bike Rio can ride. Do not mutate. */
+export function allBikes() {
+  return ALL_BIKES;
+}
+
+/** Build a bike and register it. See motor.js for the paint/rider options. */
+export function createBike(renderer, x, z, heading, paint, opts) {
+  const bike = createMotor(renderer, x, z, heading, paint, opts);
+  ALL_BIKES.push(bike);
+  return bike;
+}
+
+/** Put every bike back on its home spot, upright and stopped (a new game or a reset). */
+export function resetBikes() {
+  for (const m of ALL_BIKES) {
+    m.x = m.homeX;
+    m.z = m.homeZ;
+    m.heading = m.homeHeading;
+    m.speed = 0;
+    m.steerVis = 0;
+    m.lean = 0;
+    m.parked = true;
+    syncMotor(m, 0);
+  }
+}
+
 /**
  * Two of the ten kerbside bays are cab stands: bays 3 and 7 of the seed-1 city, both on
  * the beach-side kerb of the x = -125 avenue, which is the corridor the drive and chase
@@ -177,7 +210,7 @@ export function createCar(renderer, x, z, heading, color, type = 'sedan') {
 // Display names per body style, and the odd one out: a cruiser is a sedan hull with a
 // livery, so the vehicle panel names it by its job and never by its body. The cab is a
 // body style of its own because its roof sign and paint are part of the mesh.
-const TYPE_NAMES = { sedan: 'Solano Sedan', sports: 'Vela GT', van: 'Cargo Van', pickup: 'Baja Pickup', taxi: 'Solmar Cab' };
+const TYPE_NAMES = { sedan: 'Solano Sedan', sports: 'Vela GT', van: 'Cargo Van', pickup: 'Baja Pickup', taxi: 'Solmar Cab', motor: 'Solano 650' };
 
 /** Human name for a car: police first, then body style, then a safe default. */
 export function carName(car) {
