@@ -111,8 +111,9 @@ function onStreetProp(props, x, z) {
 }
 
 /**
- * One palm every 13 m down each avenue kerb, one every 18 m down the beach streets, plus a
- * loose row on the sand. The first offset (8.6 m from the centreline) sits in the pavement
+ * One palm every 10 m down the x = -125 kerb (the chase/drive shot corridor) and every
+ * 13 m down the x = -25 kerb, one every 18 m down the beach streets, plus a loose row on
+ * the sand. The first offset (8.6 m from the centreline) sits in the pavement
  * strip between the facades and the kerb; a lot whose building reaches the block edge
  * leaves under 1 m of pavement, so those positions fall back to the kerb line (7.5 m)
  * instead of being dropped. Either way the palm is outside every building footprint, clear
@@ -140,9 +141,11 @@ function plantAvenues(colliders, props, palms) {
     }
   };
   for (const line of PALM_AVENUES) {
-    for (let along = -CITY.bound + 6; along <= CITY.bound - 6; along += 13) {
+    // The camera drives down x = -125, so that kerb carries the denser row.
+    const step = line === -125 ? 10 : 13;
+    for (let along = -CITY.bound + 6; along <= CITY.bound - 6; along += step) {
       place(line, true, along, -1);
-      place(line, true, along + 6.5, 1);
+      place(line, true, along + step / 2, 1);
     }
   }
   for (const line of PALM_STREETS) {
