@@ -1234,6 +1234,14 @@ function buildSigns() {
 }
 
 // --- palms --------------------------------------------------------------------------
+/**
+ * How far every palm is pushed into the ground, in metres. The trunk is tilted rz = -0.08
+ * inside `buildPalmGeo`, which lifts the base of the 4.4 m cylinder by ~0.7 cm, and a 22 cm
+ * trunk with no contact shadow reads as floating on the pale pavement. Sinking it a fixed
+ * 15 cm makes the trunk bite into the ground and keeps the buried amount identical at
+ * every crown scale, so the offset lives on the instance, not in the baked geometry.
+ */
+const PALM_SINK = 0.15;
 let palmGeoCache = null;
 /** Trunk + crown + fronds baked into one geometry, vertex coloured, for instancing. */
 function buildPalmGeo() {
@@ -1282,8 +1290,12 @@ function buildTreeGeo() {
   return treeGeoCache;
 }
 
-/** One instanced draw for a single-geometry field; `scaleOf`/`yawOf` default to seeded variety. */
-function scratchInstances(scene, geo, list, scaleOf, yawOf) {
+/**
+ * One instanced draw for a single-geometry field; `scaleOf`/`yawOf` default to seeded
+ * variety. `liftOf` returns a world-space y offset for an instance and is applied after
+ * scaling, so the same list can be sunk by a fixed amount regardless of its crown size.
+ */
+function scratchInstances(scene, geo, list, scaleOf, yawOf, liftOf) {
   const mesh = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }), list.length);
   mesh.castShadow = SHADOW.mode === 'map';
   const m = new THREE.Matrix4();
@@ -1294,12 +1306,62 @@ function scratchInstances(scene, geo, list, scaleOf, yawOf) {
     const h = scaleOf(item, i);
     s.set(h, h, h);
     q.setFromAxisAngle(UP, yawOf(item, i));
-    p.set(item.x, 0, item.z);
+    p.set(item.x, liftOf ? liftOf(item, i) : 0, item.z);
     m.compose(p, q, s);
     mesh.setMatrixAt(i, m);
   });
   mesh.instanceMatrix.needsUpdate = true;
   mesh.computeBoundingSphere();
+  scene.add(mesh);
+  return mesh;
+}
+
+// --- palm contact shadows -----------------------------------------------------------
+let contactTexCache = null;
+/** Soft round contact shadow for a palm base, drawn once and shared by the whole row. */
+function contactTexture() {
+  if (contactTexCache) return contactTexCache;
+  const c = document.createElement('canvas');
+  c.width = 64;
+  c.height = 64;
+  const g = c.getContext('2d');
+  const grad = g.createRadialGradient(32, 32, 2, 32, 32, 31);
+  grad.addColorStop(0, 'rgba(255,255,255,.95)');
+  grad.addColorStop(0.5, 'rgba(255,255,255,.55)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 64, 64);
+  contactTexCache = srgb(new THREE.CanvasTexture(c));
+  return contactTexCache;
+}
+
+/**
+ * Dark discs under every palm, in one unlit instanced draw. The pavement is bright enough
+ * that the trunks need a footprint to sit on; a 0.8 m radius disc is wide enough to read
+ * at chase distance and narrow enough not to pool under the crown.
+ */
+function buildPalmShades(scene, palms) {
+  if (!palms || !palms.length) return null;
+  const geo = new THREE.PlaneGeometry(1, 1);
+  geo.rotateX(-Math.PI / 2);
+  const mat = new THREE.MeshBasicMaterial({
+    map: contactTexture(), transparent: true, depthWrite: false, opacity: 0.34, color: 0x1b2418,
+  });
+  const mesh = new THREE.InstancedMesh(geo, mat, palms.length);
+  mesh.frustumCulled = false;
+  mesh.renderOrder = 1;
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const s = new THREE.Vector3();
+  const p = new THREE.Vector3();
+  palms.forEach((palm, i) => {
+    const h = (palm.scale || 1) * 1.2;
+    s.set(h, h, h);
+    p.set(palm.x, 0.045, palm.z);
+    m.compose(p, q, s);
+    mesh.setMatrixAt(i, m);
+  });
+  mesh.instanceMatrix.needsUpdate = true;
   scene.add(mesh);
   return mesh;
 }
@@ -1665,7 +1727,9 @@ export function createRenderer(canvas, city) {
       scene, buildPalmGeo(), city.palms,
       (palm, i) => palm.scale || (0.9 + ((((Math.round(palm.x * 13 + palm.z * 7) % 7) + 7) % 7) * 0.045)),
       (palm) => (((Math.round(palm.x * 13 + palm.z * 7) % 11) + 11) % 11) * 0.57,
+      () => -PALM_SINK,
     );
+    buildPalmShades(scene, city.palms);
   }
   if (city.trees && city.trees.length) {
     scratchInstances(
