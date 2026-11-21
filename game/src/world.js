@@ -118,19 +118,18 @@ function createMarket(colliders) {
 
 /**
  * How far the drawn crown reaches from the trunk, in metres at instance scale 1. Both
- * numbers are read off the baked geometry in render.js: a palm frond tip sits 1.9 m out
- * (1.05 m base + 0.7 m blunt tip, cos-projected, plus the 0.35 m crown offset on +x), and
- * the widest broadleaf blob is hypot(0.85, 0.3) + 1.15 = 2.05 m. A crown needs this much
- * room plus CROWN_GAP, or the leaves grow through the wall (and the fronds cast a long
- * thin shadow across the facade).
+ * numbers are measured off the baked geometry in render.js with `v5/tmp/reach-probe.mjs`
+ * (it replays the same seeded blade draws): a palm blade's arc carries its tip 2.22 m out
+ * from the crown point, plus the 0.38 m the trunk leans, so the row palm reaches 2.60 m.
+ * The block palm (variant 1) has shorter blades at 1.92 m + 0.38 m = 2.30 m. A crown needs
+ * this much room plus CROWN_GAP, or the leaves grow through the wall.
  *
- * The palm number is deliberately left at 2.1 after the tip was shortened to 1.9 m: the
- * gate measures clearance against a flat 2.1, and rounding the row back to the true 1.9
- * would plant trunks in the 0.2 m band the gate still calls a violation. 2.1 is the
- * conservative value that keeps the measured violator count at zero.
+ * These replaced the old 2.1 / 2.05 (a 1.9 m frond beside a 1.25 m ball). The blades are
+ * wider and longer than the old fronds, so the clearance has to grow with them or the
+ * measured violator count stops being zero.
  */
-const PALM_CROWN_REACH = 2.1;
-const TREE_CROWN_REACH = 2.05;
+const PALM_CROWN_REACH = 2.6;
+const TREE_CROWN_REACH = 2.3;
 const CROWN_GAP = 0.5;
 
 /** Kerb lines that get a palm row down both sides. The two avenues are the shot corridors. */
