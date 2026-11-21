@@ -45,7 +45,7 @@ import { stageShot } from './shots.js';
 
 // v4 names, aliased once so the call sites below stay plain functions.
 const {
-  createCar, driveCar, nearestCar,
+  createBike, createCar, driveCar, nearestCar, parkBike,
 } = vehicles;
 const {
   createCombat, clearHostiles, firePistol, punch, resetCombat, spawnHostiles, startReload, updateCombat,
@@ -153,12 +153,19 @@ function buildGame() {
     return createCar(renderer, s.x, s.z, s.heading, i === 0 ? 0xff5a36 : (colors[i % colors.length] || s.color), type);
   });
   const traffic = createTraffic(city, random, renderer);
+  // Rio's own bike: parked in the kerb strip of the -25 road (the same strip the parked
+  // cars use, outside the traffic lanes), two metres north of the safehouse spawn, so the
+  // first E of a new game can be the bike. Same model and same home-spot reset as the
+  // traffic bikes.
+  const bike = createBike(renderer, -19.6, -16, 0, 0xd6402f, { jacket: 0x2c3e50 });
+  bike.parked = true;
   const police = createPolice(renderer);
   const fight = createCombat(renderer);
   const missions = createMissions();
   const settings = loadSettings();
   const g = {
     city, renderer, input, hud, player, cars, traffic, police, combat: fight, missions,
+    bike,
     screen: SCREEN_TITLE, driving: null, money: START_MONEY, health: 100,
     wanted: 0, camYaw: 0, camPitch: 0.35,
     objective: '', hint: '', time: 0, saveTimer: 0, speed: 0,
@@ -331,6 +338,8 @@ function resetGame(g, fresh) {
     nearCar.mesh.rotation.y = Math.PI;
   }
   resetTraffic(g.traffic, random);
+  // Rio's bike back on its kerb; resetTraffic already restored the traffic bikes.
+  parkBike(g.bike);
   clearPolice(g.police);
   resetCombat(g.combat);
   if (fresh) Object.assign(g.missions, createMissions());
@@ -804,13 +813,24 @@ function enterExitCar(g) {
     g.player.vx = 0;
     g.player.vz = 0;
     g.player.heading = car.heading;
+    // A bike left behind is an empty bike, standing where it was left: the rider mesh
+    // belongs to whoever is riding, and Rio is now on foot.
+    if (car.motor) {
+      car.parked = true;
+      vehicles.syncMotor(car, 0);
+    }
     g.hint = 'WASD move · Shift run · E enter car · P pause';
     g.hintUntil = g.time + HINT_SECONDS;
     announce('On foot.');
     return;
   }
+  // A bike is mounted the same way as a car (E), and the nearest one wins when it is
+  // closer than the nearest car — otherwise the bike on the kerb beside a parked car
+  // could never be reached. Traffic bikes are rideable too: taking one off the street
+  // is stealing, exactly like taking a traffic car.
   const parked = nearestCar(g.cars, g.player.x, g.player.z, 4.5);
   const moving = nearestCar(g.traffic.cars, g.player.x, g.player.z, 4.5);
+  const bike = vehicles.nearestMotor(g.traffic.bikes, g.player.x, g.player.z, 4.5);
   let car = null;
   let stolen = false;
   if (parked && moving) {
@@ -821,6 +841,25 @@ function enterExitCar(g) {
   } else {
     car = parked || moving;
     stolen = car === moving;
+  }
+  if (bike) {
+    const db = dist2(g.player.x, g.player.z, bike.x, bike.z);
+    const dc = car ? dist2(g.player.x, g.player.z, car.x, car.z) : Infinity;
+    if (db <= dc) {
+      const ti = g.traffic.bikes.indexOf(bike);
+      if (ti >= 0) {
+        g.traffic.bikes.splice(ti, 1);
+        stolen = true;
+        addCrime(g, CRIME.steal, 'steal', 'You stole a bike! The cops are coming.');
+      }
+      g.driving = bike;
+      bike.parked = false;
+      g.player.mesh.visible = false;
+      g.hint = 'WASD ride · Space brake · E get off · P pause';
+      g.hintUntil = g.time + HINT_SECONDS;
+      announce(stolen ? 'Riding — stolen.' : 'Riding.');
+      return;
+    }
   }
   if (!car) return;
   if (stolen) {
@@ -954,6 +993,8 @@ function respawnPlayer(g, reason) {
     g.missionStartedAt = g.time;
   }
   g.driving = null;
+  // A bike Rio was on when he went down stays where it fell, riderless.
+  if (g.bike) { g.bike.parked = true; vehicles.syncMotor(g.bike, 0); }
   g.player.mesh.visible = true;
   g.player.x = SAFEHOUSE.x;
   g.player.z = SAFEHOUSE.z;
@@ -996,18 +1037,25 @@ function stepWorld(g, dt) {
   if (g.driving) {
     const car = g.driving;
     const drive = g.input.drive();
-    const hitWall = driveCar(car, dt, drive, g.city);
+    // A bike is lighter, quicker and leans; everything after this line (traffic shove,
+    // peds, camera) is shared with a car, which is why a bike carries the car's fields.
+    const hitWall = car.motor
+      ? vehicles.driveMotor(car, dt, drive, g.city)
+      : driveCar(car, dt, drive, g.city);
     // Vehicle damage (v5): walls and traffic both cost the car, and the HUD reads
     // it back through carHealth(). Guarded — v4 vehicles.js has neither.
     if (hitWall && Math.abs(car.speed) > 10) vehicles.damageCar?.(car, 6);
     // Soft collision with traffic: shove the car out and kill speed, never pass through.
+    // A bike is 1.9 m long and half a car wide, so it needs a tighter separation or a
+    // traffic car would fling it across the lane.
+    const pushOut = car.motor ? 2.6 : 4;
     for (const other of g.traffic.cars) {
       const dx = car.x - other.x;
       const dz = car.z - other.z;
       const d = Math.hypot(dx, dz);
-      if (d < 4 && d > 0.01) {
-        car.x = other.x + (dx / d) * 4;
-        car.z = other.z + (dz / d) * 4;
+      if (d < pushOut && d > 0.01) {
+        car.x = other.x + (dx / d) * pushOut;
+        car.z = other.z + (dz / d) * pushOut;
         if (Math.abs(car.speed) > 6) {
           addCrime(g, CRIME.hitCar, 'hitCar', 'You clipped a car!');
           vehicles.damageCar?.(car, Math.min(20, Math.abs(car.speed) * 0.6));
@@ -1035,7 +1083,9 @@ function stepWorld(g, dt) {
     while (d > Math.PI) d -= Math.PI * 2;
     while (d < -Math.PI) d += Math.PI * 2;
     g.camYaw += d * Math.min(1, dt * 2.5);
-    g.camPitch += (0.32 - g.camPitch) * Math.min(1, dt * 3);
+    // A bike sits lower and turns harder, so its chase camera drops a little and follows
+    // the heading more tightly; the roll stays out of the camera so the horizon holds still.
+    g.camPitch += ((car.motor ? 0.27 : 0.32) - g.camPitch) * Math.min(1, dt * 3);
   } else {
     const move = g.input.move();
     updatePlayer(g.player, dt, move, g.input.run(), g.camYaw, g.city);

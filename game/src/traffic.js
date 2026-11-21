@@ -20,7 +20,7 @@
 // with the factory absent the whole signal LOGIC still runs, only the lamps are missing.
 import * as THREE from 'three';
 import { CITY, PALETTE, PEDESTRIANS, TRAFFIC_CARS } from './config.js';
-import { createBike, createCar } from './vehicles.js';
+import { createBike, createCar, parkBike, syncMotor } from './vehicles.js';
 import { sfx } from './audio.js';
 
 // --- local tuning (config.js belongs to W-A, so these live here) ---------------------
@@ -306,8 +306,11 @@ export function createTraffic(city, random, renderer) {
       wait: 0,           // seconds held at a kerb
     });
   }
+  // `bikePool` is every bike this city built; `bikes` is the ones still on the street.
+  // Rio can take one (main.js splices it out), and a reset puts it back.
+  const bikePool = createBikes(random, renderer);
   const traffic = {
-    cars, peds, lights, time: 0, bikes: createBikes(random, renderer),
+    cars, peds, lights, time: 0, bikes: bikePool.slice(), bikePool,
     // signalised: crossings with a working signal state machine (the logic, always on).
     // heads: visible lamp heads actually built (a subset, for draw-call budget).
     signalised: NL, heads: 0,
@@ -354,16 +357,10 @@ export function resetTraffic(traffic, random) {
     p.wasFleeing = false;
     p.wait = 0;
   }
-  // Bikes go back to their home lanes; a bike Rio took is no longer in this list.
-  for (const m of traffic.bikes) {
-    m.x = m.homeX;
-    m.z = m.homeZ;
-    m.heading = m.homeHeading;
-    m.speed = 0;
-    m.lean = 0;
-    m.want = 0;
-    syncBike(m, 0);
-  }
+  // Bikes go back to their home lanes and rejoin the street: a bike Rio took (spliced
+  // out of `bikes`) reappears on its home spot, so every reset starts from the same city.
+  traffic.bikes = traffic.bikePool.slice();
+  for (const m of traffic.bikes) parkBike(m);
 }
 
 // --- per-frame scratch (no allocation in the hot loop) -------------------------------
@@ -750,12 +747,10 @@ function stepBike(traffic, m, dt) {
   syncBike(m, dt);
 }
 
-/** Push a traffic bike's state onto its mesh, with a small lean from its lane changes. */
+/** Push a traffic bike's state onto its mesh, rider on, wheels turning. */
 function syncBike(m, dt) {
-  m.mesh.position.set(m.x, 0, m.z);
-  m.mesh.rotation.set(0, m.heading, m.lean || 0);
-  const spin = (m.speed * dt) / 0.33;
-  for (const w of m.mesh.userData.wheels) w.rotation.x += spin;
+  m.parked = false;
+  syncMotor(m, dt);
 }
 
 /**

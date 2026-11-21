@@ -94,8 +94,8 @@ function wheelGeometry() {
   return WHEEL;
 }
 
-/** The whole bike in one geometry: frame and rider, in `paint` with a `jacket` on the rider. */
-function bikeBody(paint, jacket, helmet) {
+/** The bike itself: frame, tank, seat, fork, bars, mudguards, pipe and lamps, in `paint`. */
+function bikeBody(paint) {
   const parts = [
     // Chassis: a spine, the engine block, the tank, the seat and the tail cowl.
     { geo: new THREE.BoxGeometry(0.16, 0.32, 1.24), m: at(0, 0.62, -0.02), color: paint },
@@ -103,7 +103,7 @@ function bikeBody(paint, jacket, helmet) {
     { geo: new THREE.BoxGeometry(0.34, 0.30, 0.56), m: at(0, 0.90, 0.22), color: paint },
     { geo: new THREE.BoxGeometry(0.36, 0.13, 0.60), m: at(0, 0.84, -0.40), color: DARK },
     { geo: new THREE.BoxGeometry(0.30, 0.20, 0.34), m: at(0, 0.94, -0.72), color: paint },
-    // Fork legs, bars, mudguards: the bits that make the front read as a bike, not a box.
+    // Fork legs, bars, mudguards and the pipe: the bits that make the front read as a bike.
     { geo: new THREE.BoxGeometry(0.07, 0.64, 0.07), m: at(-0.10, 0.62, 0.60, -0.22), color: CHROME },
     { geo: new THREE.BoxGeometry(0.07, 0.64, 0.07), m: at(0.10, 0.62, 0.60, -0.22), color: CHROME },
     { geo: new THREE.BoxGeometry(0.66, 0.06, 0.06), m: at(0, 1.02, 0.50), color: DARK },
@@ -113,7 +113,16 @@ function bikeBody(paint, jacket, helmet) {
     // Lamps: a bright block at the front and a red one at the tail, baked in like a car's.
     { geo: new THREE.BoxGeometry(0.20, 0.17, 0.12), m: at(0, 0.96, 0.66), color: 0xfff0c8 },
     { geo: new THREE.BoxGeometry(0.16, 0.08, 0.05), m: at(0, 0.86, -0.90), color: 0xe8483a },
-    // Rider: hips, thighs, shins, a leaning torso, arms to the bars, helmet and visor.
+  ];
+  return merge(parts);
+}
+
+/**
+ * The rider, as its own mesh so it can sit on the bike while Rio rides and step off with
+ * him: hips, thighs, shins, a forward-leaning torso, arms to the bars, helmet and visor.
+ */
+function riderBody(jacket, helmet) {
+  const parts = [
     { geo: new THREE.BoxGeometry(0.40, 0.20, 0.34), m: at(0, 0.94, -0.40), color: DARK },
     { geo: new THREE.BoxGeometry(0.15, 0.16, 0.44), m: at(-0.20, 0.86, 0.02), color: DARK },
     { geo: new THREE.BoxGeometry(0.15, 0.16, 0.44), m: at(0.20, 0.86, 0.02), color: DARK },
@@ -131,14 +140,18 @@ function bikeBody(paint, jacket, helmet) {
 
 /**
  * Build a bike at (x, z) facing `heading`. `paint` is the body colour, `opts.jacket` the
- * rider's jacket and `opts.helmet` the helmet; pass `opts.rider: false` for a riderless bike.
+ * rider's jacket and `opts.helmet` the helmet. The rider is a separate mesh, shown only
+ * while the bike is ridden (`parked` false), so a bike Rio stepped off is an empty bike
+ * rather than a statue sitting on it.
  */
 export function createMotor(renderer, x, z, heading, paint = 0xc0392b, opts = {}) {
   const jacket = opts.jacket === undefined ? 0x2c3e50 : opts.jacket;
   const helmet = opts.helmet === undefined ? 0x1c1f24 : opts.helmet;
   const group = new THREE.Group();
-  const body = new THREE.Mesh(bikeBody(paint, jacket, helmet), BODY_MAT);
+  const body = new THREE.Mesh(bikeBody(paint), BODY_MAT);
   body.castShadow = true;
+  const rider = new THREE.Mesh(riderBody(jacket, helmet), BODY_MAT);
+  rider.castShadow = true;
   const wheels = [];
   const geo = wheelGeometry();
   for (const wz of [0.68, -0.68]) {
@@ -148,8 +161,8 @@ export function createMotor(renderer, x, z, heading, paint = 0xc0392b, opts = {}
     wheels.push(w);
     group.add(w);
   }
-  group.add(body);
-  group.userData = { body, wheels };
+  group.add(body, rider);
+  group.userData = { body, rider, wheels };
   group.position.set(x, 0, z);
   group.rotation.y = heading;
   renderer.scene.add(group);
@@ -164,14 +177,16 @@ export function createMotor(renderer, x, z, heading, paint = 0xc0392b, opts = {}
   };
 }
 
-/** Push a bike's state onto its mesh: position, heading, lean and this frame's wheel spin. */
+/** Push a bike's state onto its mesh: position, heading, lean, rider and wheel spin. */
 export function syncMotor(m, dt) {
   m.mesh.position.set(m.x, 0, m.z);
   // Euler order XYZ applies z first, i.e. the roll is taken about the bike's own forward
   // axis, then the heading — which is exactly a lean into the corner.
   m.mesh.rotation.set(0, m.heading, m.lean);
+  const u = m.mesh.userData;
+  u.rider.visible = !m.parked;
   const spin = (m.speed * (dt || 0)) / MOTO.wheelR;
-  for (const w of m.mesh.userData.wheels) w.rotation.x += spin;
+  for (const w of u.wheels) w.rotation.x += spin;
 }
 
 /**

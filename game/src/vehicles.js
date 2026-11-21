@@ -144,13 +144,13 @@ export function allCars() {
   return ALL_CARS;
 }
 
-// Bikes are kept apart from ALL_CARS: they share the point-with-a-heading model and the
-// car fields the HUD reads, but they drive through motor.js's own physics and must never
-// turn up in a car search (a car list is what the wrench, the garage and the drive-by
-// target scan). Created once at boot, so the registry never grows.
+// Bikes share the point-with-a-heading model and the car fields the HUD reads, but they
+// drive through motor.js's own physics and must never turn up in a car search (a car list
+// is what the wrench, the garage and the drive-by target scan). main.js owns the one bike
+// Rio can ride; traffic.js owns the NPC ones.
 const ALL_BIKES = [];
 
-/** Every bike Rio can ride. Do not mutate. */
+/** Every bike in the world. Do not mutate. */
 export function allBikes() {
   return ALL_BIKES;
 }
@@ -162,19 +162,21 @@ export function createBike(renderer, x, z, heading, paint, opts) {
   return bike;
 }
 
-/** Put every bike back on its home spot, upright and stopped (a new game or a reset). */
-export function resetBikes() {
-  for (const m of ALL_BIKES) {
-    m.x = m.homeX;
-    m.z = m.homeZ;
-    m.heading = m.homeHeading;
-    m.speed = 0;
-    m.steerVis = 0;
-    m.lean = 0;
-    m.parked = true;
-    syncMotor(m, 0);
-  }
+/** Park a bike back on its home spot, upright, stopped and riderless. */
+export function parkBike(m) {
+  m.x = m.homeX;
+  m.z = m.homeZ;
+  m.heading = m.homeHeading;
+  m.speed = 0;
+  m.steerVis = 0;
+  m.lean = 0;
+  m.parked = true;
+  syncMotor(m, 0);
 }
+
+// Re-exported so main.js rides a bike through the vehicles namespace it already imports:
+// a bike is a vehicle, and main.js needs no second import line for it.
+export { driveMotor, nearestMotor, syncMotor };
 
 /**
  * Two of the ten kerbside bays are cab stands: bays 3 and 7 of the seed-1 city, both on

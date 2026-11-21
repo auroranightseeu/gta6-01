@@ -8,7 +8,7 @@
 import { GETAWAY_MARKER, STEP } from './config.js';
 import { SCREEN_PLAY } from './render.js';
 import { updatePlayer } from './player.js';
-import { driveCar } from './vehicles.js';
+import { driveCar, syncMotor } from './vehicles.js';
 import { updateTraffic } from './traffic.js';
 import { spawnPoliceCar, updatePolice } from './police.js';
 import { beginMission, missionText } from './missions.js';
@@ -91,10 +91,37 @@ function driveForward(game, car, seconds) {
   }
 }
 
+/**
+ * Shared: put the three traffic bikes on the kerb lane of the -125 avenue, ahead of the
+ * shot car and heading the same way, so they are the first thing the drive and chase
+ * frames show after Rio's own car. They keep their real lanes and their own signals; only
+ * their along-lane position is staged, which is what shots.js does for cars already.
+ * z is measured from the shot car's own position at the end of the staging run, so the
+ * gap is fixed no matter how far the car got.
+ */
+function stageBikes(game, car, offsets, dir = 1) {
+  const bikes = game.traffic.bikes;
+  const lane = dir > 0 ? 3.4 : -3.4;
+  for (let i = 0; i < offsets.length && i < bikes.length; i += 1) {
+    const m = bikes[i];
+    m.lane = { line: -125, vertical: true, dir, lane };
+    m.x = -125 + lane;
+    m.z = car.z + offsets[i];
+    m.heading = dir > 0 ? 0 : Math.PI;
+    m.speed = m.cruise || 12;
+    m.lean = 0;
+    syncMotor(m, 0);
+  }
+}
+
 /** Driving through the city: Rio's car on the -25 road, traffic on the cross streets. */
 function stageDrive(game) {
   const car = takeCar(game);
   driveForward(game, car, DRIVE_SECONDS);
+  // Bikes ahead in the kerb lane: 5.5, 10 and 16 m up the road, in a tight line like the
+  // reference's bike row — close enough to read as bikes with their riders, clear of the
+  // car's nose (which ends 2.1 m ahead of its centre) and of each other.
+  stageBikes(game, car, [5.5, 10, 16]);
   return { screen: SCREEN_PLAY };
 }
 
@@ -220,6 +247,10 @@ function stageChase(game) {
     policeCtx.wanted = game.wanted;
     updatePolice(game.police, policeCtx, STEP);
   }
+  // Two bikes coming the other way, in the far lane 12 and 26 m ahead: the cover's chase
+  // already has police traffic, so the bikes stay out of the pursuit's way and read as
+  // street life beside it.
+  stageBikes(game, car, [5.5, 10, 16], -1);
   return { screen: SCREEN_PLAY };
 }
 
