@@ -268,11 +268,18 @@ function stageShoot(game) {
   game.player.mesh.position.set(-25, 0, -52);
   game.player.mesh.rotation.y = Math.PI;
   // Aim down the street: the shot follows the camera's sight line now, so the camera has
-  // to look at the rivals (camYaw PI = down -z, the way Rio faces) or the tracer leaves
-  // the barrel sideways. The over-the-shoulder camera keeps his head clear of the reticle
+  // to look at the rivals (camYaw 0 = down -z, the way Rio faces) or the tracer leaves
+  // the barrel the wrong way. placeCamera puts the rig at target + (sin yaw, cos yaw) * d,
+  // so yaw 0 is behind Rio at +z looking -z; PI put the camera in FRONT of him looking
+  // back up the street, and the shot flew off over his shoulder while both rivals sat
+  // behind the lens. The over-the-shoulder camera keeps his head clear of the reticle
   // and the muzzle flash reads at the barrel tip, so the gun is still visible.
-  game.camYaw = Math.PI;
-  game.camPitch = 0.22;
+  game.camYaw = 0;
+  // A steeper pitch than the old 0.22. The tracer runs level down the street, so a level
+  // camera puts it within a few pixels of screen centre and perspective squashes a 26 m
+  // streak into a 40 px stub; looking down more lifts the muzzle up the frame and lets the
+  // same streak project ~65 px, and the fallen rival reads from above instead of edge-on.
+  game.camPitch = 0.34;
   game.wanted = 2;
   game.hint = 'Mouse aim · LMB fire · R reload · 1/2/3 weapon · P pause';
   // The SMG is unlocked but resets with an empty magazine (startMag 0), and a weapon with
@@ -282,6 +289,19 @@ function stageShoot(game) {
   smg.mag = 24;
   refillAmmo(game.combat, 'smg', 60);
   spawnHostiles(game.combat, -25, -66, 3);
+  // The hit cone is measured from the camera's centre line, which rides 0.55 m to Rio's
+  // right (main.js placeCamera, combat.aimFromCamera). The rival at spawn angle 0 lands on
+  // Rio's own x, so he sits 0.55 m off that line — 7.8 deg at 4 m, wider than the SMG's
+  // 7 deg cone — and both staged rounds missed him. Put him on the sight line instead of
+  // moving the spawn ring.
+  const sightX = game.player.x + Math.cos(game.camYaw) * 0.55;
+  for (const h of game.combat.hostiles) {
+    if (h.x === -25 && h.z === -56) {
+      h.x = sightX;
+      h.mesh.position.x = sightX;
+      break;
+    }
+  }
   const ctx = {
     x: game.player.x, z: game.player.z, heading: game.player.heading,
     // On foot the shot follows the camera's sight line, so the staged frame must aim the
@@ -290,12 +310,31 @@ function stageShoot(game) {
     peds: game.traffic.peds, trafficCars: game.traffic.cars,
     sanctioned: true, driving: false, time: 0,
   };
-  // Two rounds: the first drops a rival, the second is still burning as a tracer when
-  // the frame is painted, with the muzzle flash at its brief 60 ms peak.
+  // Three rounds. The first two land on the near rival (1 hp each, so he drops), and
+  // because the pool only keeps the LAST shot's tracer, the third is the one the frame
+  // shows. It is fired down the empty street — no walker or car in the cone — so it runs
+  // the SMG's full 26 m and stays a long streak instead of a stub that dies 4 m out.
   game.combat.cooldown = 0;
   firePistol(game.combat, ctx);
   game.combat.cooldown = 0;
   firePistol(game.combat, ctx);
+  game.combat.cooldown = 0;
+  firePistol(game.combat, { ...ctx, peds: [], trafficCars: [] });
+  // The street reacts: two walkers on the kerbs break into a run away from the gunfire.
+  // Staged on known spots like stageFoot's walkers so they read at sheet size instead of
+  // being whichever far-off ped happened to be in frame. The -25 road is 14 m wide, so the
+  // kerbs sit at x = -32 and -18.
+  const runners = [[0, -18.6, -57], [1, -31.4, -55]];
+  for (const [i, x, z] of runners) {
+    const p = game.traffic.peds[i];
+    p.x = x;
+    p.z = z;
+    p.vertical = false;
+    p.mesh.position.set(x, 0, z);
+    p.flee = 6;
+    p.fleeX = x - game.player.x;
+    p.fleeZ = z - game.player.z;
+  }
   for (let i = 0; i < 4; i += 1) updateTraffic(game.traffic, STEP);
   return { screen: SCREEN_PLAY };
 }
