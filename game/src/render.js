@@ -1257,6 +1257,53 @@ function buildPalmGeo() {
   return palmGeoCache;
 }
 
+// --- broadleaf street trees ---------------------------------------------------------
+let treeGeoCache = null;
+/**
+ * A plain street tree baked into one geometry: a short trunk plus three overlapping
+ * icosahedron canopies (264 triangles with the trunk, against the palm's 212), vertex
+ * coloured so a whole avenue varies without a second material. Instancing keeps it at one
+ * draw call for the whole city.
+ */
+function buildTreeGeo() {
+  if (treeGeoCache) return treeGeoCache;
+  const parts = [];
+  parts.push({ geo: new THREE.CylinderGeometry(0.17, 0.26, 2.6, 6), matrix: at(0, 1.3, 0), color: PALETTE.palmTrunk });
+  const leaf = 0x4c8a3c;
+  const blobs = [
+    [0, 3.9, 0, 1.55, leaf],
+    [0.85, 3.3, 0.3, 1.15, tintOf(leaf, 0.86)],
+    [-0.8, 3.35, -0.35, 1.05, tintOf(leaf, 1.16)],
+  ];
+  for (const [x, y, z, r, color] of blobs) {
+    parts.push({ geo: new THREE.IcosahedronGeometry(r, 1), matrix: at(x, y, z), color });
+  }
+  treeGeoCache = mergeParts(parts);
+  return treeGeoCache;
+}
+
+/** One instanced draw for a single-geometry field; `scaleOf`/`yawOf` default to seeded variety. */
+function scratchInstances(scene, geo, list, scaleOf, yawOf) {
+  const mesh = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }), list.length);
+  mesh.castShadow = SHADOW.mode === 'map';
+  const m = new THREE.Matrix4();
+  const q = new THREE.Quaternion();
+  const s = new THREE.Vector3();
+  const p = new THREE.Vector3();
+  list.forEach((item, i) => {
+    const h = scaleOf(item, i);
+    s.set(h, h, h);
+    q.setFromAxisAngle(UP, yawOf(item, i));
+    p.set(item.x, 0, item.z);
+    m.compose(p, q, s);
+    mesh.setMatrixAt(i, m);
+  });
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.computeBoundingSphere();
+  scene.add(mesh);
+  return mesh;
+}
+
 // --- the sea -------------------------------------------------------------------------
 function buildOcean() {
   const width = WATER.far;
@@ -1609,26 +1656,23 @@ export function createRenderer(canvas, city) {
   scene.add(furniture);
   scene.add(buildSigns());
 
-  // Palms: one instanced draw.
+  // Palms and street trees: one instanced draw each. Pixel scale/rotation per instance is
+  // derived from the position, so the same city is drawn the same way on every capture.
+  // `scale` comes from world.js for the planted rows (it varies row by row); the older
+  // in-block palms carry no scale and keep the derived 0.90-1.17 range they always had.
   if (city.palms.length) {
-    const palmMesh = new THREE.InstancedMesh(buildPalmGeo(), new THREE.MeshLambertMaterial({ vertexColors: true }), city.palms.length);
-    palmMesh.castShadow = SHADOW.mode === 'map';
-    const m = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    const s = new THREE.Vector3();
-    const p = new THREE.Vector3();
-    city.palms.forEach((palm, i) => {
-      const seed = Math.round(palm.x * 13 + palm.z * 7);
-      const h = 0.9 + (((seed % 7) + 7) % 7) * 0.045;
-      s.set(h, h, h);
-      q.setFromAxisAngle(UP, ((((seed % 11) + 11) % 11) * 0.57));
-      p.set(palm.x, 0, palm.z);
-      m.compose(p, q, s);
-      palmMesh.setMatrixAt(i, m);
-    });
-    palmMesh.instanceMatrix.needsUpdate = true;
-    palmMesh.computeBoundingSphere();
-    scene.add(palmMesh);
+    scratchInstances(
+      scene, buildPalmGeo(), city.palms,
+      (palm, i) => palm.scale || (0.9 + ((((Math.round(palm.x * 13 + palm.z * 7) % 7) + 7) % 7) * 0.045)),
+      (palm) => (((Math.round(palm.x * 13 + palm.z * 7) % 11) + 11) % 11) * 0.57,
+    );
+  }
+  if (city.trees && city.trees.length) {
+    scratchInstances(
+      scene, buildTreeGeo(), city.trees,
+      (tree) => tree.scale || 1,
+      (tree, i) => tree.rot || 0,
+    );
   }
 
   // Downtown landmark tower: glass shaft plus a warm crown.
