@@ -1436,107 +1436,160 @@ function buildSigns() {
  * every crown scale, so the offset lives on the instance, not in the baked geometry.
  */
 const PALM_SINK = 0.15;
-let palmGeoCache = null;
-/** Top of the 4.4 m trunk after its rz = -0.08 lean: the single point every frond grows from. */
-const PALM_CROWN_X = 0.35;
-const PALM_CROWN_Y = 4.42;
+const DEG = Math.PI / 180;
+/** Palm geometry per variant: 0 = avenue/beach palm, 1 = the taller block palm. */
+const palmGeoCache = [null, null];
 
-let frondGeoCache = null;
 /**
- * One palm frond, as a tapered blade that leaves the crown nearly level and droops at the
- * tip. It is built along +Z so the nine of them need only a yaw to radiate, and it is
- * squashed across its thickness (0.3x) so it reads as a leaf, not as the thick green
- * cylinder the old cone produced. Two open-ended 4-gon segments (16 triangles, no caps:
- * both ends are hidden, the base inside the crown and the tip 1 cm across) with the wide
- * end at the base and the narrow end at the tip — a cone the right way round.
+ * One palm frond as a WIDE, flat, drooping blade (round R4palm). The old frond was a
+ * squashed 4-gon cone 1.9 m long — at chase distance it read as a thin needle beside a
+ * ball, not as a palm leaf. This one is a ribbon: 0.42-0.56 m wide at the base, never
+ * narrower than 0.13 m at the tip, following an arc that leaves the crown at 26-35 deg
+ * and bends down to -45..-65 deg by the tip, so it rises and then hangs.
  *
- * The tip is the part that decides whether a frond reads as a leaf or as a hairline. An
- * earlier pass widened it to a 0.05 m radius and squashed it 0.45x, which still left a
- * 0.0225 m half-thickness = 4.5 cm across: at chase distance (39 px per metre) that is
- * ~2 px seen flat and a bare 1 px line seen edge-on, so the crops still showed thin
- * needles beside every crown. The tip is now 0.09 m radius with a 0.6x squash, i.e. at
- * least 10.8 cm across its thin axis (~4 px) and 20 cm across its width, and the tip
- * segment is shortened to 0.7 m so the blade ends blunt instead of trailing away. The
- * whole frond therefore reaches 1.9 m, not 2.1 m (see PALM_CROWN_REACH in world.js).
+ * The ribbon has five segments and a shallow V-fold along the midrib (the edges sit a
+ * little below the centre line), which gives the facets something to catch the sun and
+ * stops the blade disappearing when seen exactly edge-on. It is 20 triangles, all wound
+ * upward: the palm mesh is drawn double-sided, and three negates the normal for the back
+ * faces, so the underside of every blade falls back to ambient and reads darker than the
+ * sunlit top — the two-tone leaf the round asked for, at no extra geometry.
  *
- * The tip segment is the only closed one: a blunt 20 cm opening would otherwise show as
- * a hole at the end of the blade, and closing only this segment means there is exactly
- * one cap at the base/tip junction rather than two coincident faces that would z-fight.
+ * Built along +Z with its base at the origin so each frond only needs a yaw (and the arc
+ * itself carries its own elevation). `len` is ARC length: the horizontal reach is shorter,
+ * which is why the crown-reach constants in world.js are measured, not guessed.
  */
-function frondGeometry() {
-  if (frondGeoCache) return frondGeoCache;
-  // Base: 1.05 m, rises ~22 deg as it leaves the trunk top. 0.135 m half-width keeps the
-  // base narrower than the 0.28 m trunk top, so no frond is thicker than the stem.
-  const lower = new THREE.CylinderGeometry(0.105, 0.135, 1.05, 4, 1, true);
-  lower.translate(0, 0.525, 0);
-  lower.scale(1.1, 1, 0.6);
-  // Tip: 0.7 m from the base's end, bending ~35 deg below level, ending blunt.
-  const upper = new THREE.CylinderGeometry(0.09, 0.105, 0.7, 4, 1, false);
-  upper.translate(0, 0.35, 0);
-  upper.scale(1.1, 1, 0.6);
-  frondGeoCache = mergeParts([
-    { geo: lower, matrix: at(0, 0, 0, 0, Math.PI / 2 - 0.38), color: 0xffffff },
-    // Start of the bend: the base segment's own end point (1.05 m out, 0.39 m up).
-    { geo: upper, matrix: at(0, 0.389, 0.975, 0, Math.PI / 2 + 0.62), color: 0xffffff },
-  ]);
-  return frondGeoCache;
+function frondBladeGeo(len, elev, depress, wBase, wTip, seed) {
+  const SEG = 5;
+  const ds = len / SEG;
+  const rnd = seeded(seed * 2654435761 + 0x9e37);
+  const rings = [];
+  let y = 0;
+  let z = 0;
+  for (let i = 0; i <= SEG; i += 1) {
+    const t = i / SEG;
+    const ang = elev - (elev + depress) * t;
+    if (i > 0) {
+      y += Math.sin(ang) * ds;
+      z += Math.cos(ang) * ds;
+    }
+    const hw = (wBase + (wTip - wBase) * t) / 2;
+    // A slight sideways curl per blade, so a row of palms is never a radial star.
+    const bend = Math.sin(t * Math.PI) * 0.14 * (rnd() - 0.5);
+    rings.push({ bx: bend, y, z, hw, drop: hw * 0.32 });
+  }
+  const pos = [];
+  const tri = (a, b, c) => { pos.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2]); };
+  for (let i = 0; i < SEG; i += 1) {
+    const r0 = rings[i];
+    const r1 = rings[i + 1];
+    const L0 = [r0.bx - r0.hw, r0.y - r0.drop, r0.z];
+    const M0 = [r0.bx, r0.y, r0.z];
+    const R0 = [r0.bx + r0.hw, r0.y - r0.drop, r0.z];
+    const L1 = [r1.bx - r1.hw, r1.y - r1.drop, r1.z];
+    const M1 = [r1.bx, r1.y, r1.z];
+    const R1 = [r1.bx + r1.hw, r1.y - r1.drop, r1.z];
+    tri(L0, L1, M1); tri(L0, M1, M0);
+    tri(M0, M1, R1); tri(M0, R1, R0);
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.computeVertexNormals();
+  return geo;
 }
 
-/** Trunk + crown + fronds baked into one geometry, vertex coloured, for instancing. */
-function buildPalmGeo() {
-  if (palmGeoCache) return palmGeoCache;
+/**
+ * Trunk + small crown hub + 11 drooping blades baked into one geometry, vertex coloured,
+ * for instancing. No ball crown is left: the hub is a 0.3 m icosahedron that only fills
+ * the gap where the blades meet the trunk top.
+ *
+ * The trunk is three tapering open-ended segments stacked along a shallow quadratic lean
+ * (0.38 m over 4.4 m), so it curves instead of standing as a straight post. Variant 1 is
+ * the taller block palm (5.0 m, 12 blades, its own seed), which is what the old broadleaf
+ * `buildTreeGeo` now draws — there is no round-canopy tree left anywhere in the city.
+ */
+function buildPalmGeo(variant = 0) {
+  if (palmGeoCache[variant]) return palmGeoCache[variant];
   const parts = [];
-  const trunk = new THREE.CylinderGeometry(0.14, 0.22, 4.4, 6);
-  parts.push({ geo: trunk, matrix: at(0.18, 2.2, 0, 0, 0, -0.08), color: PALETTE.palmTrunk });
-  const crown = new THREE.IcosahedronGeometry(1.25, 1);
-  parts.push({ geo: crown, matrix: at(PALM_CROWN_X, 4.9, 0), color: tintOf(PALETTE.palmLeaf, 0.85) });
-  // All nine fronds share one origin at the trunk top, so their thick bases sit inside the
-  // crown with no gap; only the drooping outer half of each blade is seen.
-  const frond = frondGeometry();
-  for (let i = 0; i < 9; i += 1) {
-    const a = (i * Math.PI * 2) / 9;
+  const H = variant ? 5.0 : 4.4;
+  const SEGS = 3;
+  const lean = (s) => 0.38 * s * s;
+  for (let i = 0; i < SEGS; i += 1) {
+    const t0 = i / SEGS;
+    const t1 = (i + 1) / SEGS;
+    const ax = lean(t0);
+    const ay = H * t0;
+    const bx = lean(t1);
+    const by = H * t1;
+    const dx = bx - ax;
+    const dy = by - ay;
+    const seg = new THREE.CylinderGeometry(
+      0.24 - 0.11 * t1, 0.24 - 0.11 * t0, Math.hypot(dx, dy), 6, 1, true,
+    );
     parts.push({
-      geo: frond,
-      matrix: at(PALM_CROWN_X, PALM_CROWN_Y, 0, a),
-      color: i % 2 ? PALETTE.palmLeaf : tintOf(PALETTE.palmLeaf, 1.18),
+      geo: seg,
+      matrix: at((ax + bx) / 2, (ay + by) / 2, 0, 0, 0, -Math.atan2(dx, dy)),
+      color: PALETTE.palmTrunk,
     });
   }
-  palmGeoCache = mergeParts(parts);
-  return palmGeoCache;
+  const cx = lean(1);
+  const cy = H;
+  parts.push({
+    geo: new THREE.IcosahedronGeometry(0.3, 0),
+    matrix: at(cx, cy, 0),
+    color: tintOf(PALETTE.palmLeaf, 0.8),
+  });
+  const rnd = seeded(0x51a7 + variant * 977);
+  const count = variant ? 12 : 11;
+  // Variant 1 (the block palm) carries shorter blades: a block interior is a 36 m square
+  // mostly filled by buildings, so a 2.9 m crown reach would leave nowhere to plant. The
+  // measured reaches are the PALM_CROWN_REACH / TREE_CROWN_REACH numbers in world.js.
+  const lenBase = variant ? 1.95 : 2.2;
+  const lenVar = variant ? 0.4 : 0.5;
+  for (let i = 0; i < count; i += 1) {
+    const len = lenBase + rnd() * lenVar;
+    const elev = (variant ? 28 + rnd() * 8 : 26 + rnd() * 8) * DEG;
+    const depress = (variant ? 50 + rnd() * 18 : 48 + rnd() * 18) * DEG;
+    const wBase = 0.42 + rnd() * 0.14;
+    const wTip = 0.13 + rnd() * 0.06;
+    const yaw = variant * 0.7 + (i * Math.PI * 2) / count + (rnd() - 0.5) * 0.35;
+    parts.push({
+      geo: frondBladeGeo(len, elev, depress, wBase, wTip, i + variant * 31),
+      matrix: at(cx, cy, 0, yaw),
+      color: i % 2 ? tintOf(PALETTE.palmLeaf, 1.14) : tintOf(PALETTE.palmLeaf, 0.9),
+    });
+  }
+  // Three small coconuts tucked under the blade bases.
+  for (let i = 0; i < 3; i += 1) {
+    const a = (i * Math.PI * 2) / 3 + 0.4;
+    parts.push({
+      geo: new THREE.IcosahedronGeometry(0.11, 0),
+      matrix: at(cx + Math.cos(a) * 0.2, cy - 0.26, Math.sin(a) * 0.2),
+      color: 0x6b4a2a,
+    });
+  }
+  palmGeoCache[variant] = mergeParts(parts);
+  return palmGeoCache[variant];
 }
 
-// --- broadleaf street trees ---------------------------------------------------------
-let treeGeoCache = null;
+// --- block palms ---------------------------------------------------------------------
 /**
- * A plain street tree baked into one geometry: a short trunk plus three overlapping
- * icosahedron canopies (264 triangles with the trunk, against the palm's 212), vertex
- * coloured so a whole avenue varies without a second material. Instancing keeps it at one
- * draw call for the whole city.
+ * The old broadleaf street tree is gone: the sheet showed its three round canopies as
+ * "ugly balls", and the round asked for palms everywhere. Blocks now draw the taller palm
+ * variant, so every tree in the city is a palm — varied by instance scale and yaw, which
+ * the block planter already supplies. Still one geometry, one instanced draw.
  */
 function buildTreeGeo() {
-  if (treeGeoCache) return treeGeoCache;
-  const parts = [];
-  parts.push({ geo: new THREE.CylinderGeometry(0.17, 0.26, 2.6, 6), matrix: at(0, 1.3, 0), color: PALETTE.palmTrunk });
-  const leaf = 0x4c8a3c;
-  const blobs = [
-    [0, 3.9, 0, 1.55, leaf],
-    [0.85, 3.3, 0.3, 1.15, tintOf(leaf, 0.86)],
-    [-0.8, 3.35, -0.35, 1.05, tintOf(leaf, 1.16)],
-  ];
-  for (const [x, y, z, r, color] of blobs) {
-    parts.push({ geo: new THREE.IcosahedronGeometry(r, 1), matrix: at(x, y, z), color });
-  }
-  treeGeoCache = mergeParts(parts);
-  return treeGeoCache;
+  return buildPalmGeo(1);
 }
 
 /**
  * One instanced draw for a single-geometry field; `scaleOf`/`yawOf` default to seeded
  * variety. `liftOf` returns a world-space y offset for an instance and is applied after
  * scaling, so the same list can be sunk by a fixed amount regardless of its crown size.
+ * `material` overrides the default lambert (the palms pass a double-sided one).
  */
-function scratchInstances(scene, geo, list, scaleOf, yawOf, liftOf) {
-  const mesh = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }), list.length);
+function scratchInstances(scene, geo, list, scaleOf, yawOf, liftOf, material) {
+  const mesh = new THREE.InstancedMesh(geo, material || new THREE.MeshLambertMaterial({ vertexColors: true }), list.length);
   mesh.castShadow = SHADOW.mode === 'map';
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
@@ -1960,16 +2013,21 @@ export function createRenderer(canvas, city) {
   if (market) scene.add(market);
   scene.add(buildSigns());
 
-  // Palms and street trees: one instanced draw each. Pixel scale/rotation per instance is
+  // Palms and block palms: one instanced draw each. Pixel scale/rotation per instance is
   // derived from the position, so the same city is drawn the same way on every capture.
   // `scale` comes from world.js for the planted rows (it varies row by row); the older
   // in-block palms carry no scale and keep the derived 0.90-1.17 range they always had.
+  // The blades are single-sided ribbons, so the palm material is DoubleSide: the back
+  // faces get three's flipped normal and fall back to ambient, which is the darker
+  // underside the round asked for. One material, still one draw per field.
+  const palmMaterial = new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide });
   if (city.palms.length) {
     scratchInstances(
-      scene, buildPalmGeo(), city.palms,
+      scene, buildPalmGeo(0), city.palms,
       (palm, i) => palm.scale || (0.9 + ((((Math.round(palm.x * 13 + palm.z * 7) % 7) + 7) % 7) * 0.045)),
       (palm) => (((Math.round(palm.x * 13 + palm.z * 7) % 11) + 11) % 11) * 0.57,
       () => -PALM_SINK,
+      palmMaterial,
     );
     buildPalmShades(scene, city.palms);
   }
@@ -1978,6 +2036,8 @@ export function createRenderer(canvas, city) {
       scene, buildTreeGeo(), city.trees,
       (tree) => tree.scale || 1,
       (tree, i) => tree.rot || 0,
+      null,
+      palmMaterial,
     );
   }
 
