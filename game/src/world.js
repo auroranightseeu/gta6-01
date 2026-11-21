@@ -132,7 +132,10 @@ function plantAvenues(colliders, props, palms) {
       if (insideBuilding(colliders, x, z, 0.45)) continue;
       if (onStreetProp(props, x, z)) continue;
       if (palms.some((p) => dist2(p.x, p.z, x, z) < 25)) continue; // no two trunks in one crown
-      palms.push({ x, z, scale: 0.92 + rnd() * 0.22 });
+      // The baked palm is 5.5 m to the crown tip; a boulevard palm is 7-9 m, and that extra
+      // height is what lifts the fronds clear of the parked cars and the shopfronts in the
+      // street-level shots.
+      palms.push({ x, z, scale: 1.32 + rnd() * 0.3 });
       return;
     }
   };
@@ -155,7 +158,7 @@ function plantAvenues(colliders, props, palms) {
     if (z > 4 && z < 48) continue;
     const x = BEACH_PALM_X + (rnd() - 0.5) * 2.4;
     if (onStreetProp(props, x, z)) continue;
-    palms.push({ x, z, scale: 0.95 + rnd() * 0.3 });
+    palms.push({ x, z, scale: 1.2 + rnd() * 0.28 });
   }
 }
 
@@ -178,7 +181,7 @@ function plantBlocks(colliders, trees) {
         const z = bz + (rnd() - 0.5) * 28;
         if (insideBuilding(colliders, x, z, 1.1)) continue;
         if (trees.some((t) => dist2(t.x, t.z, x, z) < 36)) continue; // keep crowns apart
-        trees.push({ x, z, scale: 0.88 + rnd() * 0.3, rot: rnd() * Math.PI * 2 });
+        trees.push({ x, z, scale: 1.05 + rnd() * 0.35, rot: rnd() * Math.PI * 2 });
         placed += 1;
       }
     }
