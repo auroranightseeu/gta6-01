@@ -1243,6 +1243,38 @@ function buildSigns() {
  */
 const PALM_SINK = 0.15;
 let palmGeoCache = null;
+/** Top of the 4.4 m trunk after its rz = -0.08 lean: the single point every frond grows from. */
+const PALM_CROWN_X = 0.35;
+const PALM_CROWN_Y = 4.42;
+
+let frondGeoCache = null;
+/**
+ * One palm frond, as a tapered blade that leaves the crown nearly level and droops at the
+ * tip. It is built along +Z so the nine of them need only a yaw to radiate, and it is
+ * squashed across its thickness (0.3x) so it reads as a leaf, not as the thick green
+ * cylinder the old cone produced. Two open-ended 4-gon segments (16 triangles, no caps:
+ * both ends are hidden, the base inside the crown and the tip 1 cm across) with the wide
+ * end at the base and the narrow end at the tip — a cone the right way round.
+ */
+function frondGeometry() {
+  if (frondGeoCache) return frondGeoCache;
+  // Base: 1.15 m, rises ~22 deg as it leaves the trunk top. 0.12 m half-width keeps the
+  // base narrower than the 0.28 m trunk top, so no frond is thicker than the stem.
+  const lower = new THREE.CylinderGeometry(0.058, 0.12, 1.15, 4, 1, true);
+  lower.translate(0, 0.575, 0);
+  lower.scale(1.1, 1, 0.3);
+  // Tip: 1.75 m from the base's end, bending ~35 deg below level.
+  const upper = new THREE.CylinderGeometry(0.011, 0.058, 1.75, 4, 1, true);
+  upper.translate(0, 0.875, 0);
+  upper.scale(1.1, 1, 0.3);
+  frondGeoCache = mergeParts([
+    { geo: lower, matrix: at(0, 0, 0, 0, Math.PI / 2 - 0.38), color: 0xffffff },
+    // Start of the bend: the base segment's own end point (1.15 m out, 0.43 m up).
+    { geo: upper, matrix: at(0, 0.428, 1.069, 0, Math.PI / 2 + 0.62), color: 0xffffff },
+  ]);
+  return frondGeoCache;
+}
+
 /** Trunk + crown + fronds baked into one geometry, vertex coloured, for instancing. */
 function buildPalmGeo() {
   if (palmGeoCache) return palmGeoCache;
@@ -1250,14 +1282,15 @@ function buildPalmGeo() {
   const trunk = new THREE.CylinderGeometry(0.14, 0.22, 4.4, 6);
   parts.push({ geo: trunk, matrix: at(0.18, 2.2, 0, 0, 0, -0.08), color: PALETTE.palmTrunk });
   const crown = new THREE.IcosahedronGeometry(1.25, 1);
-  parts.push({ geo: crown, matrix: at(0.35, 4.9, 0), color: tintOf(PALETTE.palmLeaf, 0.85) });
-  const frond = new THREE.ConeGeometry(0.42, 3.9, 4);
-  frond.translate(0, -1.85, 0);
+  parts.push({ geo: crown, matrix: at(PALM_CROWN_X, 4.9, 0), color: tintOf(PALETTE.palmLeaf, 0.85) });
+  // All nine fronds share one origin at the trunk top, so their thick bases sit inside the
+  // crown with no gap; only the drooping outer half of each blade is seen.
+  const frond = frondGeometry();
   for (let i = 0; i < 9; i += 1) {
     const a = (i * Math.PI * 2) / 9;
     parts.push({
       geo: frond,
-      matrix: at(0.35 + Math.sin(a) * 0.1, 5.45, Math.cos(a) * 0.1, a, 0.68),
+      matrix: at(PALM_CROWN_X, PALM_CROWN_Y, 0, a),
       color: i % 2 ? PALETTE.palmLeaf : tintOf(PALETTE.palmLeaf, 1.18),
     });
   }
