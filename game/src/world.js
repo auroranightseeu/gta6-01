@@ -46,8 +46,12 @@ export function createCity(random) {
       if (random() < 0.6) {
         const px = bx + (random() - 0.5) * 28;
         const pz = bz + (random() - 0.5) * 28;
-        // Keep a palm out of a building footprint so it never grows through a wall.
-        if (!insideBuilding(colliders, px, pz, 1.4)) palms.push({ x: px, z: pz });
+        // Keep a palm out of a building footprint so it never grows through a wall, and
+        // clear of the facade by its whole crown: the trunk being outside the wall is not
+        // enough when 2.5 m of fronds hangs off it.
+        if (!insideBuilding(colliders, px, pz, 1.4) && crownFits(colliders, px, pz, PALM_CROWN_REACH)) {
+          palms.push({ x: px, z: pz });
+        }
       }
     }
   }
@@ -85,6 +89,17 @@ export function createCity(random) {
   plantBlocks(colliders, trees);
   return { buildings, colliders, lamps, palms, trees, parkedSpots, bound: CITY.bound, props };
 }
+
+/**
+ * How far the drawn crown reaches from the trunk, in metres at instance scale 1. Both
+ * numbers are read off the baked geometry in render.js: a palm frond tip sits 2.49 m out
+ * (1.15 m base + 1.75 m tip, cos-projected) and the widest broadleaf blob is
+ * hypot(0.85, 0.3) + 1.15 = 2.05 m. A crown needs this much room plus CROWN_GAP, or the
+ * leaves grow through the wall (and the fronds cast a long thin shadow across the facade).
+ */
+const PALM_CROWN_REACH = 2.49;
+const TREE_CROWN_REACH = 2.05;
+const CROWN_GAP = 0.5;
 
 /** Kerb lines that get a palm row down both sides. The two avenues are the shot corridors. */
 const PALM_AVENUES = [-125, -25];
@@ -128,16 +143,26 @@ function plantAvenues(colliders, props, palms) {
     if (CITY.roadLines.some((l) => Math.abs(along - l) < 10)) return;
     for (const off of [ROAD_HALF + 1.6, ROAD_HALF + 0.5]) {
       const d = line + side * off;
-      const x = vertical ? d : along;
-      const z = vertical ? along : d;
-      if (insideBuilding(colliders, x, z, 0.45)) continue;
-      if (onStreetProp(props, x, z)) continue;
-      if (palms.some((p) => dist2(p.x, p.z, x, z) < 25)) continue; // no two trunks in one crown
-      // The baked palm is 5.5 m to the crown tip; a boulevard palm is 7-9 m, and that extra
-      // height is what lifts the fronds clear of the parked cars and the shopfronts in the
-      // street-level shots.
-      palms.push({ x, z, scale: 1.32 + rnd() * 0.3 });
-      return;
+      // A lot whose building reaches the block edge leaves less pavement than the crown
+      // needs, so try the kerb line and then slide up to 6 m along the street to the next
+      // gap between facades. Only a slot with no gap at all is dropped.
+      for (const slide of [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6]) {
+        const a = along + slide;
+        if (CITY.roadLines.some((l) => Math.abs(a - l) < 10)) continue;
+        const x = vertical ? d : a;
+        const z = vertical ? a : d;
+        if (insideBuilding(colliders, x, z, 0.45)) continue;
+        if (onStreetProp(props, x, z)) continue;
+        if (palms.some((p) => dist2(p.x, p.z, x, z) < 25)) continue; // no two trunks in one crown
+        // The baked palm is 5.5 m to the crown tip; a boulevard palm is 7-9 m, and that extra
+        // height is what lifts the fronds clear of the parked cars and the shopfronts in the
+        // street-level shots. The clearance test uses the tallest crown this row can draw
+        // (1.62) and runs BEFORE the scale draw, so a rejected slot consumes no random number
+        // and every palm that already fitted keeps the exact position it had.
+        if (!crownFits(colliders, x, z, PALM_CROWN_REACH * 1.62)) continue;
+        palms.push({ x, z, scale: 1.32 + rnd() * 0.3 });
+        return;
+      }
     }
   };
   for (const line of PALM_AVENUES) {
@@ -161,6 +186,7 @@ function plantAvenues(colliders, props, palms) {
     if (z > 4 && z < 48) continue;
     const x = BEACH_PALM_X + (rnd() - 0.5) * 2.4;
     if (onStreetProp(props, x, z)) continue;
+    if (!crownFits(colliders, x, z, PALM_CROWN_REACH * 1.48)) continue;
     palms.push({ x, z, scale: 1.2 + rnd() * 0.28 });
   }
 }
@@ -179,12 +205,14 @@ function plantBlocks(colliders, trees) {
       if (!residential && !oldTown) continue;
       const want = rnd() < 0.5 ? 4 : 3;
       let placed = 0;
-      for (let tries = 0; tries < 30 && placed < want; tries += 1) {
+      for (let tries = 0; tries < 40 && placed < want; tries += 1) {
         const x = bx + (rnd() - 0.5) * 28;
         const z = bz + (rnd() - 0.5) * 28;
         if (insideBuilding(colliders, x, z, 1.1)) continue;
         if (trees.some((t) => dist2(t.x, t.z, x, z) < 36)) continue; // keep crowns apart
-        trees.push({ x, z, scale: 1.05 + rnd() * 0.35, rot: rnd() * Math.PI * 2 });
+        const scale = 1.05 + rnd() * 0.35;
+        if (!crownFits(colliders, x, z, TREE_CROWN_REACH * scale)) continue;
+        trees.push({ x, z, scale, rot: rnd() * Math.PI * 2 });
         placed += 1;
       }
     }
@@ -197,6 +225,23 @@ function insideBuilding(colliders, x, z, margin) {
     if (x > c.minX - margin && x < c.maxX + margin && z > c.minZ - margin && z < c.maxZ + margin) return true;
   }
   return false;
+}
+
+/**
+ * True when a crown of `reach` metres centred on (x, z) clears every facade by CROWN_GAP.
+ * `insideBuilding` only guarantees the TRUNK is outside the wall, which is why a palm could
+ * stand 0.6 m from a shopfront with 2.5 m of fronds pushed through it. Measuring the real
+ * gap to the nearest wall (not the box the point is in) also covers the corner case where a
+ * trunk sits in the 2 m gap between two lots.
+ */
+function crownFits(colliders, x, z, reach) {
+  const need = reach + CROWN_GAP;
+  for (const c of colliders) {
+    const dx = Math.max(c.minX - x, 0, x - c.maxX);
+    const dz = Math.max(c.minZ - z, 0, z - c.maxZ);
+    if (dx * dx + dz * dz < need * need) return false;
+  }
+  return true;
 }
 
 /**
