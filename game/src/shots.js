@@ -13,6 +13,7 @@ import { updateTraffic } from './traffic.js';
 import { spawnPoliceCar, updatePolice } from './police.js';
 import { beginMission, missionText } from './missions.js';
 import { firePistol, refillAmmo, spawnHostiles, switchWeapon } from './combat.js';
+import { applyDusk } from './dusk.js';
 
 const DRIVE_SECONDS = 5.5;
 const FOOT_SECONDS = 6;
@@ -189,6 +190,9 @@ function stageDusk(game) {
   game.hint = 'WASD move · Shift run · E enter car · P pause';
   // A couple of steps of traffic so the road is not frozen mid-lane, camera car-free.
   for (let i = 0; i < 12; i += 1) updateTraffic(game.traffic, STEP);
+  // The boot look is golden hour for every frame; dusk.js swaps the sky, sun, fog and
+  // lights on this page's own scene only, so the day shots keep the boot look untouched.
+  applyDusk(game.renderer.scene, game.city);
   game.speed = 0;
   return { screen: SCREEN_PLAY };
 }
