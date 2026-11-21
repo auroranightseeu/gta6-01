@@ -287,24 +287,43 @@ export function createTraffic(city, random, renderer) {
     car.hold = false; // stopped by a red this frame
     cars.push(car);
   }
+  // A quarter of the fleet is restaged onto the -125 avenue, the corridor the sheet looks
+  // down: a spread of cars over 6 road lines is believable in play but reads as an empty
+  // street in a single frame. They keep their real lanes, signals and queueing.
+  const avenueCars = Math.round(TRAFFIC_CARS * 0.25);
+  for (let i = 0; i < avenueCars && i < cars.length; i += 1) placeAvenueCar(cars[i], random);
   const peds = [];
+  const market = city.market;
+  const marketN = market ? Math.round(PEDESTRIANS * MARKET_SHARE) : 0;
+  const avenueN = Math.round(PEDESTRIANS * AVENUE_SHARE);
   for (let i = 0; i < PEDESTRIANS; i += 1) {
-    const li = Math.floor(random() * N);
-    const line = LINES[li];
-    const vertical = random() < 0.5;
-    const side = random() < 0.5 ? -9.5 : 9.5;
-    const along = (random() * 2 - 1) * 120;
     const style = i % 3 === 0 ? 1 : 0;
     const mesh = renderer.makePerson(PALETTE.pedColors[Math.floor(random() * PALETTE.pedColors.length)], style);
     renderer.scene.add(mesh);
-    peds.push({
-      x: vertical ? line + side : along, z: vertical ? along : line + side,
-      line, vertical, dir: random() < 0.5 ? -1 : 1, speed: 1 + random() * 0.8,
+    const p = {
+      x: 0, z: 0,
+      line: -125, vertical: false, dir: 1, speed: 1 + random() * 0.8,
       heading: 0, phase: random() * 6, mesh,
       flee: 0, fleeX: 0, fleeZ: 0, dodge: 0,
       wasFleeing: false, // panic edge detector: the transition is what spreads it
       wait: 0,           // seconds held at a kerb
-    });
+    };
+    if (i < marketN) placeMarketPed(p, market, random);
+    else if (i < marketN + avenueN) placeAvenuePed(p, random);
+    else {
+      const li = Math.floor(random() * N);
+      const line = LINES[li];
+      const vertical = random() < 0.5;
+      const side = random() < 0.5 ? -9.5 : 9.5;
+      const along = (random() * 2 - 1) * 120;
+      p.x = vertical ? line + side : along;
+      p.z = vertical ? along : line + side;
+      p.line = line;
+      p.vertical = vertical;
+      p.dir = random() < 0.5 ? -1 : 1;
+      p.mesh.position.set(p.x, 0, p.z);
+    }
+    peds.push(p);
   }
   // `bikePool` is every bike this city built; `bikes` is the ones still on the street.
   // Rio can take one (main.js splices it out), and a reset puts it back.
@@ -319,6 +338,62 @@ export function createTraffic(city, random, renderer) {
   };
   traffic.heads = buildSignalHeads(renderer, city, lights);
   return traffic;
+}
+
+// --- crowd density (v5, R4e) ---------------------------------------------------------
+// The market and the -125 avenue are the two places the sheet actually looks, so a share
+// of the walkers is placed there instead of uniformly over the whole grid. Both functions
+// consume the SAME seeded `random` as before, so a seed still builds the same city; only
+// where the walkers end up changes.
+//
+// MARKET_SHARE: how many of the walkers stand in the market aisle and along its two kerbs.
+// AVENUE_SHARE: how many walk along the -125 sidewalk between the market and the camera.
+const MARKET_SHARE = 0.34;
+const AVENUE_SHARE = 0.2;
+
+/** Market crowd: a tight cluster in the aisle, the rest browsing the stall fronts. */
+function placeMarketPed(p, market, rnd) {
+  const a = rnd() * Math.PI * 2;
+  const r = Math.sqrt(rnd()) * 3.2;
+  const aisle = rnd() < 0.62;
+  if (aisle) {
+    // In the walking aisle between the two rows: bodies close together, the way a market
+    // reads at a distance — a solid band of people, not a scatter of dots.
+    p.x = market.x + (rnd() - 0.5) * 1.6;
+    p.z = market.z + (rnd() - 0.5) * 9;
+  } else {
+    p.x = market.x + Math.cos(a) * (3.6 + r);
+    p.z = market.z + Math.sin(a) * (6 + r);
+  }
+  p.vertical = false;
+  p.dir = rnd() < 0.5 ? -1 : 1;
+  p.line = -125;
+  p.mesh.position.set(p.x, 0, p.z);
+}
+
+/** Avenue crowd: walkers on the -125 pavement, spread along the stretch the camera sees. */
+function placeAvenuePed(p, rnd) {
+  p.vertical = true;
+  p.line = -125;
+  // The kerb strip between the facades and the road, on the block side only (the seaward
+  // side is the promenade wall). x = -125 + 9.5 is the pavement line peds already use.
+  p.x = -125 + (rnd() < 0.5 ? 9.5 : -9.5);
+  p.z = -20 + rnd() * 70;
+  p.dir = rnd() < 0.5 ? -1 : 1;
+  p.mesh.position.set(p.x, 0, p.z);
+}
+
+/** Extra cars on the -125 avenue: the corridor the drive/chase shots look down. */
+function placeAvenueCar(car, rnd) {
+  const lane = rnd() < 0.5 ? -3.4 : 3.4;
+  const dir = rnd() < 0.5 ? -1 : 1;
+  car.lane = { line: -125, vertical: true, dir, lane };
+  car.z = -40 + rnd() * 120;
+  car.x = -125 + lane;
+  car.heading = dir > 0 ? 0 : Math.PI;
+  car.mesh.position.set(car.x, 0, car.z);
+  car.mesh.rotation.y = car.heading;
+  car.speed = car.cruise * 0.6;
 }
 
 function carX(lane) { return lane.line + lane.lane; }

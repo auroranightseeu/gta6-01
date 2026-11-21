@@ -765,7 +765,10 @@ function cloudTexture() {
 // legs, torso, arms, head. A person object is an empty Group (zero draws) with limb
 // holders that the walking code rotates exactly as before; render() bakes those rotations
 // into instance matrices each frame.
-const PERSON_CAP = 72;
+// Capacity of the four instanced person passes. Must cover every pedestrian plus Rio,
+// the rivals and the market crowd: PEDESTRIANS is 90 (R4e), and the cap is padded for the
+// player and hostiles. Overflow is silently skipped, so this has to stay ahead of config.
+const PERSON_CAP = 128;
 const PERSON_GEO = {
   leg: (() => { const g = new THREE.BoxGeometry(0.22, 0.8, 0.22); g.translate(0, -0.4, 0); return g; })(),
   torso: new THREE.BoxGeometry(0.56, 0.62, 0.3),
@@ -1300,6 +1303,63 @@ function buildBuildingTrim(city) {
     }
   });
   if (!parts.length) return null;
+  const mesh = new THREE.Mesh(mergeParts(parts), bodyMatCache);
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+/**
+ * The night market, baked into ONE merged mesh like the street furniture: for each stall a
+ * table, a striped awning on four thin posts and a crate or two, plus a string of hanging
+ * bulbs down the aisle between the two rows. No light per stall — the bulbs are small bright
+ * boxes, which at street distance read as lit bulbs without paying for a point light. The
+ * awnings are the colour block that makes the market legible at sheet size: a solid 3.6 m
+ * band of warm colour on each side of the aisle, right where the chase camera looks.
+ */
+const MARKET_AWNINGS = [0xc6543e, 0x218c91, 0xd29a42];
+function buildMarket(city) {
+  const m = city.market;
+  if (!m || !m.stalls.length) return null;
+  const parts = [];
+  for (const s of m.stalls) {
+    const c = MARKET_AWNINGS[s.kind % MARKET_AWNINGS.length];
+    const cos = Math.cos(s.rot);
+    const sin = Math.sin(s.rot);
+    // Table: a 2.4 x 0.85 plank on four legs, at counter height.
+    parts.push({ geo: new THREE.BoxGeometry(2.4, 0.1, 0.85), matrix: at(s.x, 0.92, s.z, s.rot), color: 0x8a6440 });
+    for (const dx of [-1.0, 1.0]) {
+      for (const dz of [-0.32, 0.32]) {
+        parts.push({
+          geo: new THREE.BoxGeometry(0.09, 0.9, 0.09),
+          matrix: at(s.x + cos * dx - sin * dz, 0.45, s.z - sin * dx - cos * dz, s.rot),
+          color: 0x6d4e31,
+        });
+      }
+    }
+    // Goods on the counter: two low blocks in the awning's own colour family.
+    parts.push({ geo: new THREE.BoxGeometry(0.9, 0.26, 0.6), matrix: at(s.x + cos * -0.6, 1.1, s.z - sin * -0.6, s.rot), color: tintOf(c, 0.8) });
+    parts.push({ geo: new THREE.BoxGeometry(0.7, 0.2, 0.55), matrix: at(s.x + cos * 0.7, 1.07, s.z - sin * 0.7, s.rot), color: 0xe0c98a });
+    // Awning: a sloped 2.9 x 1.7 sheet over the table, with a white valance so the edge reads.
+    parts.push({ geo: new THREE.BoxGeometry(2.9, 0.07, 1.75), matrix: at(s.x, 2.45, s.z, s.rot, 0.16), color: c });
+    parts.push({ geo: new THREE.BoxGeometry(2.9, 0.3, 0.06), matrix: at(s.x + cos * 0.86, 2.3, s.z - sin * 0.86, s.rot), color: 0xf4ecdd });
+    for (const dx of [-1.35, 1.35]) {
+      parts.push({
+        geo: new THREE.CylinderGeometry(0.035, 0.035, 2.5, 4),
+        matrix: at(s.x + cos * dx, 1.25, s.z - sin * dx),
+        color: 0x5d5f62,
+      });
+    }
+    // A crate beside the table, so the stall is not a floating rectangle.
+    parts.push({ geo: new THREE.BoxGeometry(0.55, 0.45, 0.5), matrix: at(s.x + cos * -1.5, 0.22, s.z - sin * -1.5, s.rot), color: 0x9c7b4e });
+  }
+  // Bulb string down the aisle: a wire plus a bulb every 2.2 m, warm white, no light source.
+  const z0 = m.z - (m.count * m.step) / 2;
+  const z1 = m.z + (m.count * m.step) / 2;
+  parts.push({ geo: new THREE.BoxGeometry(0.04, 0.04, z1 - z0), matrix: at(m.x, 3.5, (z0 + z1) / 2), color: 0x2b2b2f });
+  for (let z = z0; z <= z1; z += 2.2) {
+    parts.push({ geo: new THREE.SphereGeometry(0.11, 6, 4), matrix: at(m.x, 3.38, z), color: 0xffeab0 });
+  }
   const mesh = new THREE.Mesh(mergeParts(parts), bodyMatCache);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
@@ -1896,6 +1956,8 @@ export function createRenderer(canvas, city) {
   if (trim) scene.add(trim);
   const furniture = buildStreetFurniture(city);
   scene.add(furniture);
+  const market = buildMarket(city);
+  if (market) scene.add(market);
   scene.add(buildSigns());
 
   // Palms and street trees: one instanced draw each. Pixel scale/rotation per instance is

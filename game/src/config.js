@@ -16,8 +16,8 @@ export const CAR = {
 // single strongest "this place is alive" cue). Measured cost of the raise: see the bench
 // numbers in the report; the scene sits far below the draw budget, so the gain in life is
 // nearly free. Spawns come from the seeded RNG, so the layout stays reproducible.
-export const TRAFFIC_CARS = 22;
-export const PEDESTRIANS = 54;
+export const TRAFFIC_CARS = 35;
+export const PEDESTRIANS = 90;
 export const PARKED_CARS = 10;
 export const START_MONEY = 250;
 // Ana Deluca's office corner (mission 1 marker).

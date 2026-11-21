@@ -87,7 +87,33 @@ export function createCity(random) {
   const trees = [];
   plantAvenues(colliders, props, palms);
   plantBlocks(colliders, trees, palms);
-  return { buildings, colliders, lamps, palms, trees, parkedSpots, bound: CITY.bound, props };
+  // Night market on the wide empty lot on the block side of the -125 avenue, right where
+  // the drive/chase camera looks: stalls, awnings and crates as plain data. render.js draws
+  // the whole market as one merged mesh (1 draw), so the crowd it pulls in is free.
+  const market = createMarket(colliders);
+  return { buildings, colliders, lamps, palms, trees, parkedSpots, bound: CITY.bound, props, market };
+}
+
+/**
+ * The market. Two rows of stalls facing each other across a walking aisle, on the open
+ * ground at x -120..-101, z 9..23 — the one lot beside the -125 avenue that has no building
+ * on it, so the aisle is visible from the street and from the chase camera 30 m up the road.
+ * Every stall is {x, z, rot, kind}: `kind` picks the awning colour in render.js, and the
+ * aisle centre line is exported for the pedestrian clustering in traffic.js.
+ */
+const MARKET = { x: -111.5, z: 16, rowGap: 5.2, stalls: 7, step: 2.6 };
+function createMarket(colliders) {
+  const rnd = hashRandom(0x9a5c3e);
+  const stalls = [];
+  for (let row = 0; row < 2; row += 1) {
+    for (let i = 0; i < MARKET.stalls; i += 1) {
+      const x = MARKET.x - (MARKET.rowGap / 2) + row * MARKET.rowGap;
+      const z = MARKET.z + (i - (MARKET.stalls - 1) / 2) * MARKET.step;
+      if (insideBuilding(colliders, x, z, 1.2)) continue;
+      stalls.push({ x, z, rot: row === 0 ? Math.PI / 2 : -Math.PI / 2, kind: Math.floor(rnd() * 3) });
+    }
+  }
+  return { stalls, x: MARKET.x, z: MARKET.z, step: MARKET.step, count: MARKET.stalls, radius: 13 };
 }
 
 /**
