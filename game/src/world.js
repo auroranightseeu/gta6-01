@@ -128,8 +128,8 @@ function createMarket(colliders) {
  * wider and longer than the old fronds, so the clearance has to grow with them or the
  * measured violator count stops being zero.
  */
-const PALM_CROWN_REACH = 2.6;
-const TREE_CROWN_REACH = 2.3;
+const PALM_CROWN_REACH = 2.65;
+const TREE_CROWN_REACH = 2.35;
 const CROWN_GAP = 0.5;
 
 /** Kerb lines that get a palm row down both sides. The two avenues are the shot corridors. */

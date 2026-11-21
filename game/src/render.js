@@ -1503,16 +1503,21 @@ function frondBladeGeo(len, elev, depress, wBase, wTip, seed) {
  * the gap where the blades meet the trunk top.
  *
  * The trunk is three tapering open-ended segments stacked along a shallow quadratic lean
- * (0.38 m over 4.4 m), so it curves instead of standing as a straight post. Variant 1 is
- * the taller block palm (5.0 m, 12 blades, its own seed), which is what the old broadleaf
- * `buildTreeGeo` now draws — there is no round-canopy tree left anywhere in the city.
+ * (0.42 m over 6.6 m), so it curves instead of standing as a straight post. Height is the
+ * one number the round could not leave alone: the old palm topped out at 6.15 m because a
+ * 1.25 m ball sat on a 4.4 m trunk, and a bare 4.4 m trunk under a 2.2 m crown reads as a
+ * stubby shrub at chase distance (39 px/m), not as a palm. 6.6 m puts the blade tips at
+ * 6.75 m, just above the old silhouette, so the frame's skyline does not shrink.
+ *
+ * Variant 1 is the block palm (8.2 m, 12 blades, its own seed, shorter blades), which is
+ * what the old broadleaf `buildTreeGeo` now draws — there is no round-canopy tree left.
  */
 function buildPalmGeo(variant = 0) {
   if (palmGeoCache[variant]) return palmGeoCache[variant];
   const parts = [];
-  const H = variant ? 5.0 : 4.4;
+  const H = variant ? 8.2 : 6.6;
   const SEGS = 3;
-  const lean = (s) => 0.38 * s * s;
+  const lean = (s) => 0.42 * s * s;
   for (let i = 0; i < SEGS; i += 1) {
     const t0 = i / SEGS;
     const t1 = (i + 1) / SEGS;
