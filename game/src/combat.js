@@ -13,7 +13,13 @@ import { createRandom } from './random.js';
 import { allCars, carUnderPlayer, damageCar, nearestCar, repairCar, tickCarFx } from './vehicles.js';
 
 const PUNCH_RANGE = 2.6;
-const MAX_TRACERS = 7;      // one shotgun blast fits in a single draw call
+// Three parallel lines per shot read ~3 px wide on screen, where a single LineSegments
+// line is always 1 px whatever linewidth says. A whole shotgun blast still fits in one
+// draw call: 7 pellets x 3 lines.
+const TRACER_STRANDS = 3;
+const MAX_TRACERS = 21;
+// Half the gap between the outer strands, in metres.
+const TRACER_SPREAD = 0.04;
 const CRATE_RESPAWN = 60;
 
 // --- weapons -------------------------------------------------------------------------
@@ -151,7 +157,7 @@ function makeCrate(kind) {
 export function createCombat(renderer) {
   const tracers = makeTracerPool(renderer.scene);
   const flash = new THREE.Mesh(
-    new THREE.SphereGeometry(0.35, 8, 6),
+    new THREE.SphereGeometry(0.7, 8, 6),
     new THREE.MeshBasicMaterial({ color: 0xffe27a, transparent: true, opacity: 0.95 }),
   );
   flash.visible = false;
@@ -266,22 +272,41 @@ function pushTracer(c, i, from, to) {
   p[o + 3] = to.x; p[o + 4] = to.y; p[o + 5] = to.z;
 }
 
-/** Show `n` tracers and pop the muzzle flash at the origin of the first one. */
+/** Show `segs` as three parallel strands each and pop the muzzle flash at the first. */
 function showShots(c, segs) {
-  const n = Math.min(segs.length, MAX_TRACERS);
-  for (let i = 0; i < n; i += 1) pushTracer(c, i, segs[i].from, segs[i].to);
-  c.tracers.geo.setDrawRange(0, n * 2);
+  // One shot is three parallel lines: WebGL ignores linewidth, so a single line can only
+  // ever be 1 px. 0.04 m either side of the shot line is ~3 px apart at 8 m, which reads
+  // as one thick tracer at screenshot size.
+  const n = Math.min(segs.length, MAX_TRACERS / TRACER_STRANDS);
+  let w = 0;
+  for (let i = 0; i < n; i += 1) {
+    const s = segs[i];
+    const dx = s.to.x - s.from.x;
+    const dz = s.to.z - s.from.z;
+    const d = Math.hypot(dx, dz) || 1;
+    const ox = (-dz / d) * TRACER_SPREAD;
+    const oz = (dx / d) * TRACER_SPREAD;
+    for (let k = -1; k <= 1; k += 1) {
+      pushTracer(
+        c, w,
+        { x: s.from.x + ox * k, y: s.from.y, z: s.from.z + oz * k },
+        { x: s.to.x + ox * k, y: s.to.y, z: s.to.z + oz * k },
+      );
+      w += 1;
+    }
+  }
+  c.tracers.geo.setDrawRange(0, w * 2);
   c.tracers.geo.attributes.position.needsUpdate = true;
   c.tracers.mesh.visible = true;
-  c.tracers.count = n;
+  c.tracers.count = w;
   // Long enough to read: at 0.08 s the tracer was gone before a single 60 fps
-  // frame could show it, and the flash (0.06 s) the same. 0.15/0.18 s is still a
+  // frame could show it, and the flash (0.06 s) the same. 0.15/0.30 s is still a
   // blink, but a real frame — and a screenshot — can catch it.
   c.tracers.t = 0.15;
   const f = segs[0].from;
   c.flash.position.set(f.x, f.y, f.z);
   c.flash.visible = true;
-  c.flashT = 0.18;
+  c.flashT = 0.30;
 }
 
 // --- drive-by aim --------------------------------------------------------------------
