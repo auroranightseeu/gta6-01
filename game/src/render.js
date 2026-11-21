@@ -1544,7 +1544,7 @@ function buildPalmGeo(variant = 0) {
     color: tintOf(PALETTE.palmLeaf, 0.8),
   });
   const rnd = seeded(0x51a7 + variant * 977);
-  const count = variant ? 12 : 11;
+  const count = variant ? 13 : 12;
   // Variant 1 (the block palm) carries shorter blades: a block interior is a 36 m square
   // mostly filled by buildings, so a 2.9 m crown reach would leave nowhere to plant. The
   // measured reaches are the PALM_CROWN_REACH / TREE_CROWN_REACH numbers in world.js.
@@ -1554,13 +1554,26 @@ function buildPalmGeo(variant = 0) {
     const len = lenBase + rnd() * lenVar;
     const elev = (variant ? 28 + rnd() * 8 : 26 + rnd() * 8) * DEG;
     const depress = (variant ? 50 + rnd() * 18 : 48 + rnd() * 18) * DEG;
-    const wBase = 0.42 + rnd() * 0.14;
+    const wBase = 0.5 + rnd() * 0.16;
     const wTip = 0.13 + rnd() * 0.06;
     const yaw = variant * 0.7 + (i * Math.PI * 2) / count + (rnd() - 0.5) * 0.35;
     parts.push({
       geo: frondBladeGeo(len, elev, depress, wBase, wTip, i + variant * 31),
       matrix: at(cx, cy, 0, yaw),
       color: i % 2 ? tintOf(PALETTE.palmLeaf, 1.14) : tintOf(PALETTE.palmLeaf, 0.9),
+    });
+  }
+  // A second, shorter inner ring rising at 55 deg: the old ball filled the middle of the
+  // crown, and without it the top of the trunk shows sky through the blades at chase
+  // distance (the frame's green area fell 43% with the outer ring alone). Eight short
+  // blades at a steep angle close the hub and give the crown a solid core.
+  for (let i = 0; i < 8; i += 1) {
+    const len = 1.0 + rnd() * 0.35;
+    const yaw = (i * Math.PI * 2) / 8 + 0.4;
+    parts.push({
+      geo: frondBladeGeo(len, (58 + rnd() * 10) * DEG, (20 + rnd() * 15) * DEG, 0.44 + rnd() * 0.1, 0.14, 90 + i + variant * 7),
+      matrix: at(cx, cy, 0, yaw),
+      color: i % 2 ? tintOf(PALETTE.palmLeaf, 1.05) : tintOf(PALETTE.palmLeaf, 0.82),
     });
   }
   // Three small coconuts tucked under the blade bases.
