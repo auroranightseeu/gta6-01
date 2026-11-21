@@ -92,12 +92,13 @@ export function createCity(random) {
 
 /**
  * How far the drawn crown reaches from the trunk, in metres at instance scale 1. Both
- * numbers are read off the baked geometry in render.js: a palm frond tip sits 2.49 m out
- * (1.15 m base + 1.75 m tip, cos-projected) and the widest broadleaf blob is
- * hypot(0.85, 0.3) + 1.15 = 2.05 m. A crown needs this much room plus CROWN_GAP, or the
- * leaves grow through the wall (and the fronds cast a long thin shadow across the facade).
+ * numbers are read off the baked geometry in render.js: a palm frond tip sits up to 2.1 m out
+ * (1.05 m base + 0.95 m tip, cos-projected, plus the 0.35 m crown offset on +x), and the
+ * widest broadleaf blob is hypot(0.85, 0.3) + 1.15 = 2.05 m. A crown needs this much room
+ * plus CROWN_GAP, or the leaves grow through the wall (and the fronds cast a long thin
+ * shadow across the facade).
  */
-const PALM_CROWN_REACH = 2.49;
+const PALM_CROWN_REACH = 2.1;
 const TREE_CROWN_REACH = 2.05;
 const CROWN_GAP = 0.5;
 

@@ -1389,22 +1389,27 @@ let frondGeoCache = null;
  * cylinder the old cone produced. Two open-ended 4-gon segments (16 triangles, no caps:
  * both ends are hidden, the base inside the crown and the tip 1 cm across) with the wide
  * end at the base and the narrow end at the tip — a cone the right way round.
+ *
+ * The blade is also made wider across its tip (0.05 m radius instead of 0.011 m) and less
+ * squashed (0.45x instead of 0.3x). A frond that tapers to a 2 cm needle is sub-pixel at
+ * chase distance (39 px per metre), so the renderer draws it as a one-pixel line — that is
+ * the "long thin thorn" coming out of every crown. A 10 cm tip is ~4 px and reads as a leaf.
  */
 function frondGeometry() {
   if (frondGeoCache) return frondGeoCache;
-  // Base: 1.15 m, rises ~22 deg as it leaves the trunk top. 0.12 m half-width keeps the
+  // Base: 1.05 m, rises ~22 deg as it leaves the trunk top. 0.13 m half-width keeps the
   // base narrower than the 0.28 m trunk top, so no frond is thicker than the stem.
-  const lower = new THREE.CylinderGeometry(0.058, 0.12, 1.15, 4, 1, true);
-  lower.translate(0, 0.575, 0);
-  lower.scale(1.1, 1, 0.3);
-  // Tip: 1.75 m from the base's end, bending ~35 deg below level.
-  const upper = new THREE.CylinderGeometry(0.011, 0.058, 1.75, 4, 1, true);
-  upper.translate(0, 0.875, 0);
-  upper.scale(1.1, 1, 0.3);
+  const lower = new THREE.CylinderGeometry(0.062, 0.13, 1.05, 4, 1, true);
+  lower.translate(0, 0.525, 0);
+  lower.scale(1.1, 1, 0.45);
+  // Tip: 0.95 m from the base's end, bending ~35 deg below level.
+  const upper = new THREE.CylinderGeometry(0.05, 0.062, 0.95, 4, 1, true);
+  upper.translate(0, 0.475, 0);
+  upper.scale(1.1, 1, 0.45);
   frondGeoCache = mergeParts([
     { geo: lower, matrix: at(0, 0, 0, 0, Math.PI / 2 - 0.38), color: 0xffffff },
-    // Start of the bend: the base segment's own end point (1.15 m out, 0.43 m up).
-    { geo: upper, matrix: at(0, 0.428, 1.069, 0, Math.PI / 2 + 0.62), color: 0xffffff },
+    // Start of the bend: the base segment's own end point (1.05 m out, 0.39 m up).
+    { geo: upper, matrix: at(0, 0.389, 0.975, 0, Math.PI / 2 + 0.62), color: 0xffffff },
   ]);
   return frondGeoCache;
 }
