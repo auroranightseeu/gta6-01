@@ -74,8 +74,115 @@ export function createCity(random) {
       color: PALETTE.carColors[Math.floor(random() * PALETTE.carColors.length)],
     });
   }
+  // Street furniture first, so the planting below can keep clear of the benches, bins and
+  // signals that already occupy the kerb strip.
   const props = createProps(colliders, buildings);
-  return { buildings, colliders, lamps, palms, parkedSpots, bound: CITY.bound, props };
+  // Street planting (v5 round R4a). Runs after the city's own seeded stream is spent and
+  // draws from its own hash PRNG, so every building, road, lamp and parked car above keeps
+  // the exact position it had before: this pass only APPENDS palms and trees.
+  const trees = [];
+  plantAvenues(colliders, props, palms);
+  plantBlocks(colliders, trees);
+  return { buildings, colliders, lamps, palms, trees, parkedSpots, bound: CITY.bound, props };
+}
+
+/** Kerb lines that get a palm row down both sides. The two avenues are the shot corridors. */
+const PALM_AVENUES = [-125, -25];
+/** Cross streets that get a row on one side only: the two beach streets and one Old Town street. */
+const PALM_STREETS = [-75, 75, 125];
+/** Sand strip between the promenade wall (x = -134) and the waterline (x = -137). */
+const BEACH_PALM_X = -135.6;
+
+/**
+ * True when a palm trunk at (x, z) would grow through a bench, bin, hydrant, signal or
+ * parasol. The trunk is only 22 cm across, so a metre of clearance is enough for the street
+ * props; the parasols on the sand are wide, so they get 2 m.
+ */
+function onStreetProp(props, x, z) {
+  const wide = [props.umbrellas];
+  const narrow = [props.signals, props.benches, props.planters, props.bins, props.hydrants];
+  for (const group of wide) {
+    for (const p of group) if (dist2(p.x, p.z, x, z) < 2 * 2) return true;
+  }
+  for (const group of narrow) {
+    for (const p of group) if (dist2(p.x, p.z, x, z) < 1.1 * 1.1) return true;
+  }
+  return false;
+}
+
+/**
+ * One palm every 13 m down each avenue kerb, one every 18 m down the beach streets, plus a
+ * loose row on the sand. The first offset (8.6 m from the centreline) sits in the pavement
+ * strip between the facades and the kerb; a lot whose building reaches the block edge
+ * leaves under 1 m of pavement, so those positions fall back to the kerb line (7.5 m)
+ * instead of being dropped. Either way the palm is outside every building footprint, clear
+ * of every intersection, of the lamp posts (8.5 m from a crossing corner) and of the
+ * benches and bins that already stand on the kerb.
+ */
+function plantAvenues(colliders, props, palms) {
+  const rnd = hashRandom(0x7a1e5);
+  const ROAD_HALF = CITY.roadWidth / 2;
+  const place = (line, vertical, along, side) => {
+    // Intersection boxes are 14x14; a palm 10 m from a crossing is past the kerb radius.
+    if (CITY.roadLines.some((l) => Math.abs(along - l) < 10)) return;
+    for (const off of [ROAD_HALF + 1.6, ROAD_HALF + 0.5]) {
+      const d = line + side * off;
+      const x = vertical ? d : along;
+      const z = vertical ? along : d;
+      if (insideBuilding(colliders, x, z, 0.45)) continue;
+      if (onStreetProp(props, x, z)) continue;
+      if (palms.some((p) => dist2(p.x, p.z, x, z) < 25)) continue; // no two trunks in one crown
+      palms.push({ x, z, scale: 0.92 + rnd() * 0.22 });
+      return;
+    }
+  };
+  for (const line of PALM_AVENUES) {
+    for (let along = -CITY.bound + 6; along <= CITY.bound - 6; along += 13) {
+      place(line, true, along, -1);
+      place(line, true, along + 6.5, 1);
+    }
+  }
+  for (const line of PALM_STREETS) {
+    // One side only, 18 m apart: a beach boulevard, not a wall of trunks.
+    const side = line === 75 ? 1 : -1;
+    for (let along = -CITY.bound + 9; along <= CITY.bound - 9; along += 18) {
+      place(line, false, along, side);
+    }
+  }
+  // Beach row: on the sand, past the promenade wall, clear of the harbour mouth and of the
+  // parasols already scattered along the same strip.
+  for (let z = -120; z <= 128; z += 26) {
+    if (z > 4 && z < 48) continue;
+    const x = BEACH_PALM_X + (rnd() - 0.5) * 2.4;
+    if (onStreetProp(props, x, z)) continue;
+    palms.push({ x, z, scale: 0.95 + rnd() * 0.3 });
+  }
+}
+
+/**
+ * Ordinary broadleaf trees, two or three per residential and old-town block, in whatever
+ * part of the block is not built on (the empty lots and the gaps between them). No tree
+ * ever lands in a facade; downtown, the harbour edge and the beachfront stay paved.
+ */
+function plantBlocks(colliders, trees) {
+  const rnd = hashRandom(0x3c0ffee);
+  for (const bx of CITY.blockCenters) {
+    for (const bz of CITY.blockCenters) {
+      const residential = Math.abs(bx) + Math.abs(bz) > 50 && bx > -50 && bz < 60 && !(bx >= 50 && bz <= -20);
+      const oldTown = bx >= 50 && bz <= -20;
+      if (!residential && !oldTown) continue;
+      const want = rnd() < 0.5 ? 4 : 3;
+      let placed = 0;
+      for (let tries = 0; tries < 30 && placed < want; tries += 1) {
+        const x = bx + (rnd() - 0.5) * 28;
+        const z = bz + (rnd() - 0.5) * 28;
+        if (insideBuilding(colliders, x, z, 1.1)) continue;
+        if (trees.some((t) => dist2(t.x, t.z, x, z) < 36)) continue; // keep crowns apart
+        trees.push({ x, z, scale: 0.88 + rnd() * 0.3, rot: rnd() * Math.PI * 2 });
+        placed += 1;
+      }
+    }
+  }
 }
 
 /** True when (x, z) is inside (or within margin of) any building footprint. */
