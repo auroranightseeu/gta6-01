@@ -144,14 +144,16 @@ function flashTexture() {
   const g = c.getContext('2d');
   g.translate(64, 64);
   // Eight spikes — four long on the axes, four short between them — fading to orange.
+  // The bright core holds most of the way out so the burst still reads at 7 m, where the
+  // whole 0.32 m star is only ~26 px across.
   for (let i = 0; i < 8; i += 1) {
-    const len = i % 2 === 0 ? 62 : 38;
-    const w = i % 2 === 0 ? 7 : 5;
+    const len = i % 2 === 0 ? 62 : 40;
+    const w = i % 2 === 0 ? 9 : 6;
     g.save();
     g.rotate((i / 8) * Math.PI * 2);
     const grad = g.createLinearGradient(0, 0, len, 0);
-    grad.addColorStop(0, 'rgba(255,255,235,0.95)');
-    grad.addColorStop(0.45, 'rgba(255,214,110,0.55)');
+    grad.addColorStop(0, 'rgba(255,255,240,1)');
+    grad.addColorStop(0.55, 'rgba(255,222,130,0.85)');
     grad.addColorStop(1, 'rgba(255,150,40,0)');
     g.fillStyle = grad;
     g.beginPath();
@@ -162,13 +164,13 @@ function flashTexture() {
     g.fill();
     g.restore();
   }
-  const core = g.createRadialGradient(0, 0, 0, 0, 0, 26);
-  core.addColorStop(0, 'rgba(255,255,250,1)');
-  core.addColorStop(0.5, 'rgba(255,226,122,0.8)');
+  const core = g.createRadialGradient(0, 0, 0, 0, 0, 30);
+  core.addColorStop(0, 'rgba(255,255,252,1)');
+  core.addColorStop(0.55, 'rgba(255,232,150,0.92)');
   core.addColorStop(1, 'rgba(255,150,40,0)');
   g.fillStyle = core;
   g.beginPath();
-  g.arc(0, 0, 26, 0, Math.PI * 2);
+  g.arc(0, 0, 30, 0, Math.PI * 2);
   g.fill();
   flashTex = new THREE.CanvasTexture(c);
   flashTex.colorSpace = THREE.SRGBColorSpace;
