@@ -123,6 +123,85 @@ function makeTracerPool(scene) {
   return { mesh, geo, pos, count: 0, t: 0 };
 }
 
+// --- muzzle flash ---------------------------------------------------------------------
+// A small additive star, not a ball. The old 0.7 m sphere at the barrel read as a pale
+// moon glued to Rio's chest from the over-the-shoulder camera: measured at 113 px across
+// on the shoot frame, it swallowed his body and the rival he had just dropped. Three
+// crossed quads with a spiked radial texture stay a compact burst at the barrel tip and
+// leave the shooter and the target readable.
+const FLASH_SIZE = 0.32;
+const FLASH_T = 0.14;
+// The flash hangs this far past the barrel tip, along the shot, so it never sits on the
+// hand or the body.
+const FLASH_AHEAD = 0.2;
+
+let flashTex = null;
+function flashTexture() {
+  if (flashTex) return flashTex;
+  const c = document.createElement('canvas');
+  c.width = 128;
+  c.height = 128;
+  const g = c.getContext('2d');
+  g.translate(64, 64);
+  // Eight spikes — four long on the axes, four short between them — fading to orange.
+  for (let i = 0; i < 8; i += 1) {
+    const len = i % 2 === 0 ? 62 : 38;
+    const w = i % 2 === 0 ? 7 : 5;
+    g.save();
+    g.rotate((i / 8) * Math.PI * 2);
+    const grad = g.createLinearGradient(0, 0, len, 0);
+    grad.addColorStop(0, 'rgba(255,255,235,0.95)');
+    grad.addColorStop(0.45, 'rgba(255,214,110,0.55)');
+    grad.addColorStop(1, 'rgba(255,150,40,0)');
+    g.fillStyle = grad;
+    g.beginPath();
+    g.moveTo(0, -w);
+    g.lineTo(len, 0);
+    g.lineTo(0, w);
+    g.closePath();
+    g.fill();
+    g.restore();
+  }
+  const core = g.createRadialGradient(0, 0, 0, 0, 0, 26);
+  core.addColorStop(0, 'rgba(255,255,250,1)');
+  core.addColorStop(0.5, 'rgba(255,226,122,0.8)');
+  core.addColorStop(1, 'rgba(255,150,40,0)');
+  g.fillStyle = core;
+  g.beginPath();
+  g.arc(0, 0, 26, 0, Math.PI * 2);
+  g.fill();
+  flashTex = new THREE.CanvasTexture(c);
+  flashTex.colorSpace = THREE.SRGBColorSpace;
+  return flashTex;
+}
+
+/** Two crossed star quads facing down the shot plus one short streak along it. The group's
+ *  +z is the shot direction, so a shot fired anywhere turns the whole burst with it. */
+function makeFlash() {
+  const tex = flashTexture();
+  const mat = new THREE.MeshBasicMaterial({
+    map: tex, transparent: true, opacity: 0.95, depthWrite: false,
+    blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+  });
+  const group = new THREE.Group();
+  for (let i = 0; i < 2; i += 1) {
+    const star = new THREE.Mesh(new THREE.PlaneGeometry(FLASH_SIZE, FLASH_SIZE), mat);
+    star.rotation.z = i * Math.PI / 2;
+    group.add(star);
+  }
+  // The tongue of flame: two narrow quads lying in the shot axis (one flat, one upright),
+  // so the burst has a direction instead of reading as a flat badge from any angle.
+  for (let i = 0; i < 2; i += 1) {
+    const tongue = new THREE.Mesh(new THREE.PlaneGeometry(FLASH_SIZE * 0.34, FLASH_SIZE * 1.7), mat);
+    if (i === 0) tongue.rotation.x = -Math.PI / 2; else tongue.rotation.y = Math.PI / 2;
+    tongue.position.z = FLASH_SIZE * 0.7;
+    group.add(tongue);
+  }
+  group.visible = false;
+  group.frustumCulled = false;
+  return group;
+}
+
 // Crate colours by kind: body first, collar second.
 const CRATE_TINT = {
   smg: { body: 0x2f4f6f, band: 0x7fc8ff },
@@ -156,12 +235,7 @@ function makeCrate(kind) {
 
 export function createCombat(renderer) {
   const tracers = makeTracerPool(renderer.scene);
-  const flash = new THREE.Mesh(
-    new THREE.SphereGeometry(0.7, 8, 6),
-    new THREE.MeshBasicMaterial({ color: 0xffe27a, transparent: true, opacity: 0.95 }),
-  );
-  flash.visible = false;
-  flash.frustumCulled = false;
+  const flash = makeFlash();
   renderer.scene.add(flash);
   // Drive-by gun: Rio is hidden inside the cabin while driving, so the person
   // instancing has nothing to draw — but a shot out of the driver's window still
@@ -304,9 +378,20 @@ function showShots(c, segs) {
   // blink, but a real frame — and a screenshot — can catch it.
   c.tracers.t = 0.15;
   const f = segs[0].from;
-  c.flash.position.set(f.x, f.y, f.z);
+  // A short burst just past the barrel tip, turned to face down the shot. Kept off the
+  // body on purpose: at 0.32 m it is ~26 px at the shoot camera's distance, where the old
+  // 0.7 m sphere was 113 px and covered Rio and the man he had just dropped.
+  const s0 = segs[0];
+  const dx = s0.to.x - s0.from.x;
+  const dz = s0.to.z - s0.from.z;
+  const dl = Math.hypot(dx, dz) || 1;
+  const fx = dx / dl;
+  const fz = dz / dl;
+  c.flash.position.set(f.x + fx * FLASH_AHEAD, f.y, f.z + fz * FLASH_AHEAD);
+  c.flash.rotation.set(0, Math.atan2(fx, fz), 0);
+  c.flash.scale.setScalar(1);
   c.flash.visible = true;
-  c.flashT = 0.30;
+  c.flashT = FLASH_T;
 }
 
 // --- drive-by aim --------------------------------------------------------------------
@@ -658,6 +743,8 @@ export function updateCombat(c, ctx, dt) {
   if (c.flashT > 0) {
     c.flashT -= dt;
     if (c.flashT <= 0) c.flash.visible = false;
+    // Shrink as it dies, so the burst pops and fades instead of hanging as a fixed decal.
+    else c.flash.scale.setScalar(0.55 + 0.45 * (c.flashT / FLASH_T));
   }
   if (c.driveByGunT > 0) {
     c.driveByGunT -= dt;
