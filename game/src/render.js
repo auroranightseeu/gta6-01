@@ -1390,22 +1390,30 @@ let frondGeoCache = null;
  * both ends are hidden, the base inside the crown and the tip 1 cm across) with the wide
  * end at the base and the narrow end at the tip — a cone the right way round.
  *
- * The blade is also made wider across its tip (0.05 m radius instead of 0.011 m) and less
- * squashed (0.45x instead of 0.3x). A frond that tapers to a 2 cm needle is sub-pixel at
- * chase distance (39 px per metre), so the renderer draws it as a one-pixel line — that is
- * the "long thin thorn" coming out of every crown. A 10 cm tip is ~4 px and reads as a leaf.
+ * The tip is the part that decides whether a frond reads as a leaf or as a hairline. An
+ * earlier pass widened it to a 0.05 m radius and squashed it 0.45x, which still left a
+ * 0.0225 m half-thickness = 4.5 cm across: at chase distance (39 px per metre) that is
+ * ~2 px seen flat and a bare 1 px line seen edge-on, so the crops still showed thin
+ * needles beside every crown. The tip is now 0.09 m radius with a 0.6x squash, i.e. at
+ * least 10.8 cm across its thin axis (~4 px) and 20 cm across its width, and the tip
+ * segment is shortened to 0.7 m so the blade ends blunt instead of trailing away. The
+ * whole frond therefore reaches 1.9 m, not 2.1 m (see PALM_CROWN_REACH in world.js).
+ *
+ * The tip segment is the only closed one: a blunt 20 cm opening would otherwise show as
+ * a hole at the end of the blade, and closing only this segment means there is exactly
+ * one cap at the base/tip junction rather than two coincident faces that would z-fight.
  */
 function frondGeometry() {
   if (frondGeoCache) return frondGeoCache;
-  // Base: 1.05 m, rises ~22 deg as it leaves the trunk top. 0.13 m half-width keeps the
+  // Base: 1.05 m, rises ~22 deg as it leaves the trunk top. 0.135 m half-width keeps the
   // base narrower than the 0.28 m trunk top, so no frond is thicker than the stem.
-  const lower = new THREE.CylinderGeometry(0.062, 0.13, 1.05, 4, 1, true);
+  const lower = new THREE.CylinderGeometry(0.105, 0.135, 1.05, 4, 1, true);
   lower.translate(0, 0.525, 0);
-  lower.scale(1.1, 1, 0.45);
-  // Tip: 0.95 m from the base's end, bending ~35 deg below level.
-  const upper = new THREE.CylinderGeometry(0.05, 0.062, 0.95, 4, 1, true);
-  upper.translate(0, 0.475, 0);
-  upper.scale(1.1, 1, 0.45);
+  lower.scale(1.1, 1, 0.6);
+  // Tip: 0.7 m from the base's end, bending ~35 deg below level, ending blunt.
+  const upper = new THREE.CylinderGeometry(0.09, 0.105, 0.7, 4, 1, false);
+  upper.translate(0, 0.35, 0);
+  upper.scale(1.1, 1, 0.6);
   frondGeoCache = mergeParts([
     { geo: lower, matrix: at(0, 0, 0, 0, Math.PI / 2 - 0.38), color: 0xffffff },
     // Start of the bend: the base segment's own end point (1.05 m out, 0.39 m up).

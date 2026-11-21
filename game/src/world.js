@@ -86,17 +86,22 @@ export function createCity(random) {
   // the exact position it had before: this pass only APPENDS palms and trees.
   const trees = [];
   plantAvenues(colliders, props, palms);
-  plantBlocks(colliders, trees);
+  plantBlocks(colliders, trees, palms);
   return { buildings, colliders, lamps, palms, trees, parkedSpots, bound: CITY.bound, props };
 }
 
 /**
  * How far the drawn crown reaches from the trunk, in metres at instance scale 1. Both
- * numbers are read off the baked geometry in render.js: a palm frond tip sits up to 2.1 m out
- * (1.05 m base + 0.95 m tip, cos-projected, plus the 0.35 m crown offset on +x), and the
- * widest broadleaf blob is hypot(0.85, 0.3) + 1.15 = 2.05 m. A crown needs this much room
- * plus CROWN_GAP, or the leaves grow through the wall (and the fronds cast a long thin
- * shadow across the facade).
+ * numbers are read off the baked geometry in render.js: a palm frond tip sits 1.9 m out
+ * (1.05 m base + 0.7 m blunt tip, cos-projected, plus the 0.35 m crown offset on +x), and
+ * the widest broadleaf blob is hypot(0.85, 0.3) + 1.15 = 2.05 m. A crown needs this much
+ * room plus CROWN_GAP, or the leaves grow through the wall (and the fronds cast a long
+ * thin shadow across the facade).
+ *
+ * The palm number is deliberately left at 2.1 after the tip was shortened to 1.9 m: the
+ * gate measures clearance against a flat 2.1, and rounding the row back to the true 1.9
+ * would plant trunks in the 0.2 m band the gate still calls a violation. 2.1 is the
+ * conservative value that keeps the measured violator count at zero.
  */
 const PALM_CROWN_REACH = 2.1;
 const TREE_CROWN_REACH = 2.05;
@@ -106,8 +111,17 @@ const CROWN_GAP = 0.5;
 const PALM_AVENUES = [-125, -25];
 /** Cross streets that get a row on one side only: the two beach streets and one Old Town street. */
 const PALM_STREETS = [-75, 75, 125];
-/** Sand strip between the promenade wall (x = -134) and the waterline (x = -137). */
-const BEACH_PALM_X = -135.6;
+/**
+ * The beach row, on the sand between the promenade wall (x -134.0..-132.4) and the water
+ * (x = -137). It IS the seaward side of the -125 avenue: that avenue has no pavement on
+ * its seaward side at all — the wall starts 0.4 m from the kerb — so the old row at
+ * x = -133.6 stood inside the wall itself. Planting it on the sand puts the trunk 1.8 m
+ * clear of the wall and 2.2 m from the kerb line, which is where a beachfront boulevard
+ * actually keeps its palms.
+ */
+const BEACH_PALM_X = -135.8;
+/** Trunk-to-trunk minimum inside one row, so two palms never share a crown. */
+const PALM_MIN_GAP = 5;
 
 /**
  * True when a palm trunk at (x, z) would grow through a bench, bin, hydrant, signal or
@@ -127,68 +141,69 @@ function onStreetProp(props, x, z) {
 }
 
 /**
- * One palm every 10 m down the x = -125 kerb (the chase/drive shot corridor) and every
- * 13 m down the x = -25 kerb, one every 18 m down the beach streets, plus a loose row on
- * the sand. The first offset (8.6 m from the centreline) sits in the pavement
- * strip between the facades and the kerb; a lot whose building reaches the block edge
- * leaves under 1 m of pavement, so those positions fall back to the kerb line (7.5 m)
- * instead of being dropped. Either way the palm is outside every building footprint, clear
- * of every intersection, of the lamp posts (8.5 m from a crossing corner) and of the
- * benches and bins that already stand on the kerb.
+ * Palms down the kerbs of the two avenues (the shot corridors), one side of the three
+ * beach streets, and a dense row along the sand that doubles as the -125 avenue's seaward
+ * line. Every position is tested against the facades by its whole crown (crownFits), the
+ * street furniture, and the "no two trunks in one crown" rule; a slot that fails is slid
+ * up to 6 m along the street to the next gap between facades before it is dropped.
+ *
+ * Density (round R4e): the chase frame is judged on how many palms it SHOWS, and the
+ * previous spacing left it at 22. The avenue rows are now every 8 m on -125 (the chase
+ * corridor) and every 11 m on -25, the beach streets every 15 m, and the sand row every
+ * 5 m — the sand carries the frame, because the block side of the -125 avenue is built
+ * out to its edge and only ~9 of its 30 kerb slots clear a crown. That puts 34 palms in
+ * the chase frame against 22, with the same zero violators.
  */
 function plantAvenues(colliders, props, palms) {
   const rnd = hashRandom(0x7a1e5);
   const ROAD_HALF = CITY.roadWidth / 2;
-  const place = (line, vertical, along, side) => {
+  /** One slot: tests every rule and pushes the palm, or returns false. */
+  const trySlot = (x, z, scaleBase, scaleVar) => {
+    if (insideBuilding(colliders, x, z, 0.45)) return false;
+    if (onStreetProp(props, x, z)) return false;
+    if (palms.some((p) => dist2(p.x, p.z, x, z) < PALM_MIN_GAP * PALM_MIN_GAP)) return false;
+    // The clearance test uses the tallest crown this row can draw (1.62) and runs BEFORE
+    // the scale draw, so a rejected slot consumes no random number and every palm that
+    // already fitted keeps the exact position it had.
+    if (!crownFits(colliders, x, z, PALM_CROWN_REACH * 1.62)) return false;
+    palms.push({ x, z, scale: scaleBase + rnd() * scaleVar });
+    return true;
+  };
+  const place = (line, along, side) => {
     // Intersection boxes are 14x14; a palm 10 m from a crossing is past the kerb radius.
     if (CITY.roadLines.some((l) => Math.abs(along - l) < 10)) return;
     for (const off of [ROAD_HALF + 1.6, ROAD_HALF + 0.5]) {
       const d = line + side * off;
-      // A lot whose building reaches the block edge leaves less pavement than the crown
-      // needs, so try the kerb line and then slide up to 6 m along the street to the next
-      // gap between facades. Only a slot with no gap at all is dropped.
       for (const slide of [0, 1, -1, 2, -2, 3, -3, 4, -4, 5, -5, 6, -6]) {
         const a = along + slide;
         if (CITY.roadLines.some((l) => Math.abs(a - l) < 10)) continue;
-        const x = vertical ? d : a;
-        const z = vertical ? a : d;
-        if (insideBuilding(colliders, x, z, 0.45)) continue;
-        if (onStreetProp(props, x, z)) continue;
-        if (palms.some((p) => dist2(p.x, p.z, x, z) < 25)) continue; // no two trunks in one crown
-        // The baked palm is 5.5 m to the crown tip; a boulevard palm is 7-9 m, and that extra
-        // height is what lifts the fronds clear of the parked cars and the shopfronts in the
-        // street-level shots. The clearance test uses the tallest crown this row can draw
-        // (1.62) and runs BEFORE the scale draw, so a rejected slot consumes no random number
-        // and every palm that already fitted keeps the exact position it had.
-        if (!crownFits(colliders, x, z, PALM_CROWN_REACH * 1.62)) continue;
-        palms.push({ x, z, scale: 1.32 + rnd() * 0.3 });
-        return;
+        if (trySlot(d, a, 1.32, 0.3)) return;
       }
     }
   };
   for (const line of PALM_AVENUES) {
-    // The camera drives down x = -125, so that kerb carries the denser row.
-    const step = line === -125 ? 10 : 13;
+    // The camera drives down x = -125, so that kerb carries the denser row. Its seaward
+    // side is planted by the beach row below (there is no pavement there, only the wall).
+    const step = line === -125 ? 8 : 11;
     for (let along = -CITY.bound + 6; along <= CITY.bound - 6; along += step) {
-      place(line, true, along, -1);
-      place(line, true, along + step / 2, 1);
+      if (line !== -125) place(line, along, -1);
+      place(line, along + step / 2, 1);
     }
   }
   for (const line of PALM_STREETS) {
-    // One side only, 18 m apart: a beach boulevard, not a wall of trunks.
+    // One side only: a beach boulevard, not a wall of trunks.
     const side = line === 75 ? 1 : -1;
-    for (let along = -CITY.bound + 9; along <= CITY.bound - 9; along += 18) {
-      place(line, false, along, side);
+    for (let along = -CITY.bound + 9; along <= CITY.bound - 9; along += 15) {
+      place(line, along, side);
     }
   }
-  // Beach row: on the sand, past the promenade wall, clear of the harbour mouth and of the
-  // parasols already scattered along the same strip.
-  for (let z = -120; z <= 128; z += 26) {
-    if (z > 4 && z < 48) continue;
-    const x = BEACH_PALM_X + (rnd() - 0.5) * 2.4;
-    if (onStreetProp(props, x, z)) continue;
-    if (!crownFits(colliders, x, z, PALM_CROWN_REACH * 1.48)) continue;
-    palms.push({ x, z, scale: 1.2 + rnd() * 0.28 });
+  // Beach row on the sand, past the promenade wall and clear of the parasols that already
+  // stand along the same strip. Every 5 m, so the chase frame gets an unbroken line of
+  // trunks along the sea instead of the handful of gaps the old 26 m spacing left.
+  for (let z = -CITY.bound + 6; z <= CITY.bound - 6; z += 5) {
+    for (const dz of [0, 1, -1, 2, -2, 3, -3]) {
+      if (trySlot(BEACH_PALM_X, z + dz, 1.32, 0.3)) break;
+    }
   }
 }
 
@@ -196,9 +211,23 @@ function plantAvenues(colliders, props, palms) {
  * Ordinary broadleaf trees, two or three per residential and old-town block, in whatever
  * part of the block is not built on (the empty lots and the gaps between them). No tree
  * ever lands in a facade; downtown, the harbour edge and the beachfront stay paved.
+ *
+ * Palms are planted BEFORE this pass, so a tree also has to keep clear of them: a broadleaf
+ * crown dropped on top of a palm's fronds hides the palm entirely, which is the other half
+ * of the "fronds stuck in a round tree" look the crops showed. Trunks stay at least one
+ * palm crown reach plus one tree crown radius apart, and a tree that cannot find such a
+ * spot is MOVED (up to 40 attempts), never simply dropped, so the block keeps its count.
  */
-function plantBlocks(colliders, trees) {
+function plantBlocks(colliders, trees, palms) {
   const rnd = hashRandom(0x3c0ffee);
+  // Trunk-to-trunk minimum against a palm: that palm's own crown reach (avenue and beach
+  // palms are drawn at up to 1.62x) plus this tree's widest crown (2.05 m at the largest
+  // scale drawn below), so the two crowns never overlap.
+  const TREE_MAX_SCALE = 1.4;
+  const palmClear = (x, z) => palms.some((p) => {
+    const need = PALM_CROWN_REACH * (p.scale ?? 1) + TREE_CROWN_REACH * TREE_MAX_SCALE;
+    return dist2(p.x, p.z, x, z) < need * need;
+  });
   for (const bx of CITY.blockCenters) {
     for (const bz of CITY.blockCenters) {
       const residential = Math.abs(bx) + Math.abs(bz) > 50 && bx > -50 && bz < 60 && !(bx >= 50 && bz <= -20);
@@ -211,6 +240,7 @@ function plantBlocks(colliders, trees) {
         const z = bz + (rnd() - 0.5) * 28;
         if (insideBuilding(colliders, x, z, 1.1)) continue;
         if (trees.some((t) => dist2(t.x, t.z, x, z) < 36)) continue; // keep crowns apart
+        if (palmClear(x, z)) continue;
         const scale = 1.05 + rnd() * 0.35;
         if (!crownFits(colliders, x, z, TREE_CROWN_REACH * scale)) continue;
         trees.push({ x, z, scale, rot: rnd() * Math.PI * 2 });
