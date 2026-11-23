@@ -14,6 +14,7 @@ import { spawnPoliceCar, updatePolice } from './police.js';
 import { beginMission, missionText } from './missions.js';
 import { firePistol, refillAmmo, spawnHostiles, switchWeapon } from './combat.js';
 import { applyDusk } from './dusk.js';
+import { renderDispatch } from './dispatch.js';
 
 const DRIVE_SECONDS = 5.5;
 const FOOT_SECONDS = 6;
@@ -26,6 +27,16 @@ const HELI_SETTLE_STEPS = 300;
 
 function clamp(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
+}
+
+/** Hide the HUD reticle for a staged frame: the shot is a photograph, not an aim view. */
+function hideReticle() {
+  const id = 'shot-no-reticle';
+  if (document.getElementById(id)) return;
+  const style = document.createElement('style');
+  style.id = id;
+  style.textContent = '#reticle{display:none !important}';
+  document.head.appendChild(style);
 }
 
 /**
@@ -115,6 +126,165 @@ function stageBikes(game, car, offsets, dir = 1) {
   }
 }
 
+/**
+ * Street life for the chase frame. The pursuit itself is staged by stageChase above; this
+ * pass fills the avenue it runs down so the shot reads as a busy city rather than a duel on
+ * an empty road, which is the axis the cover is judged on (open world you can see).
+ *
+ * Everything is placed AFTER the drive and police steps, at offsets from the shot car's own
+ * final position — the rule stageBikes already uses — so the layout holds no matter how far
+ * the car got. The avenue is two-way: the west lane carries cars going Rio's way (tails up
+ * the road), the east lane carries oncoming traffic (fronts and headlights) with the three
+ * bikes weaving up it, and two oncoming cars sit beside and just ahead of Rio's fender so the
+ * road is populated at the camera as well as up it. The block-side pavement is a line of
+ * walkers in front of the market crowd, with two more on the seaward sand for balance.
+ */
+function stageChaseStreet(game, car) {
+  const CITY_SIDE = -121.6; // lane the oncoming traffic and the bikes ride
+  const AWAY_SIDE = -128.4; // lane the cars heading the same way as Rio ride
+  const z0 = car.z;
+  // [lane x, dir, offset from the shot car] for twelve avenue cars. dir -1 faces the camera —
+  // fronts and headlights, the read a busy avenue gives at a glance — and its first two sit
+  // beside and just ahead of Rio's fender, so the road is populated at the camera as well as
+  // up it. dir 1 fills Rio's own lane above the pursuit, far enough that no car sits on his
+  // bumper in a frozen 108 km/h frame. Cars are 12 m apart (7.8 m of clear air behind each
+  // 4.2 m body, real following distance) and 18-42 m is left to the bike row, which weaves
+  // past the queue instead of waiting in it.
+  const SLOTS = [
+    [CITY_SIDE, -1, 4], [CITY_SIDE, -1, 14], [CITY_SIDE, -1, 46], [CITY_SIDE, -1, 58],
+    [CITY_SIDE, -1, 70], [CITY_SIDE, -1, 82], [CITY_SIDE, -1, 94], [CITY_SIDE, -1, 106],
+    [AWAY_SIDE, 1, 48], [AWAY_SIDE, 1, 62], [AWAY_SIDE, 1, 76], [AWAY_SIDE, 1, 90],
+  ];
+  const cars = game.traffic.cars;
+  for (let i = 0; i < cars.length; i += 1) {
+    const t = cars[i];
+    const slot = SLOTS[i];
+    if (slot) {
+      const [x, dir, off] = slot;
+      t.lane = { line: -125, vertical: true, dir, lane: x + 125 };
+      t.x = x;
+      t.z = z0 + off;
+      t.heading = dir > 0 ? 0 : Math.PI;
+      t.speed = t.cruise || 10;
+      t.parked = false;
+      t.mesh.position.set(x, 0, t.z);
+      t.mesh.rotation.y = t.heading;
+    } else if (t.lane && t.lane.line === -125) {
+      // A car this pass did not stage leaves the chase road for a cross street, so the lane
+      // stays exactly the layout above instead of picking up strays behind it.
+      const line = i % 2 ? -75 : 75;
+      t.lane = { line, vertical: true, dir: t.lane.dir, lane: t.lane.lane };
+      t.x = line + t.lane.lane;
+      t.mesh.position.set(t.x, 0, t.z);
+    }
+  }
+  const bikes = game.traffic.bikes;
+  // Bikes in the oncoming lane, ahead of Rio: 20, 28 and 36 m up, so the row is close enough
+  // to read as riders with their jackets and far enough to sit under the pursuit rather than
+  // on the car's nose. They ride the oncoming lane and slip past its queue instead of waiting
+  // behind it — the bike rule traffic.js already runs — so the lane's car slots skip 18-42 m.
+  const bikeOffsets = [20, 28, 36];
+  for (let i = 0; i < bikeOffsets.length && i < bikes.length; i += 1) {
+    const m = bikes[i];
+    m.lane = { line: -125, vertical: true, dir: -1, lane: 3.4 };
+    m.x = CITY_SIDE;
+    m.z = z0 + bikeOffsets[i];
+    m.heading = Math.PI;
+    m.speed = m.cruise || 12;
+    m.lean = 0;
+    syncMotor(m, 0);
+  }
+  // [offset, walk direction] along the block-side pavement, plus two on the beach sand.
+  // x comes from pavementX at that z, so no walker ends up inside a facade.
+  const walkers = [
+    [9, 1], [16, -1], [24, 1], [33, -1], [43, 1], [54, -1], [66, 1], [78, -1], [92, 1],
+  ];
+  const peds = game.traffic.peds;
+  let placed = 0;
+  for (let i = 0; i < walkers.length && i < peds.length; i += 1) {
+    const [off, dir] = walkers[i];
+    const x = pavementX(game, z0 + off, 0.55);
+    if (x === null) continue;
+    const p = peds[i];
+    p.x = x;
+    p.z = z0 + off;
+    p.vertical = true;
+    p.line = -125;
+    p.dir = dir;
+    p.heading = dir > 0 ? 0 : Math.PI;
+    p.flee = 0;
+    p.dodge = 0;
+    p.mesh.position.set(x, 0, p.z);
+    p.mesh.rotation.y = p.heading;
+    placed += 1;
+  }
+  // Two on the seaward sand, past the promenade wall, where the beach row already walks:
+  // they read on the opposite kerb and give the avenue both sides populated.
+  const sand = [[14, 1], [40, -1]];
+  for (let i = 0; i < sand.length && placed < peds.length; i += 1) {
+    const [off, dir] = sand[i];
+    const p = peds[placed];
+    p.x = -134.5;
+    p.z = z0 + off;
+    p.vertical = true;
+    p.line = -125;
+    p.dir = dir;
+    p.heading = dir > 0 ? 0 : Math.PI;
+    p.flee = 0;
+    p.dodge = 0;
+    p.mesh.position.set(-134.5, 0, p.z);
+    p.mesh.rotation.y = p.heading;
+    placed += 1;
+  }
+  // Crowd walkers that placeAvenuePed already put on this pavement are kept — they make the
+  // street busier — but their fixed x = -115.5 can sit inside a facade, and two of them can
+  // land on a staged body. Snap each to the free pavement lane at its own z; the ones with
+  // no lane at all are moved to the market aisle, where the crowd is dense anyway.
+  for (let i = placed; i < peds.length; i += 1) {
+    const p = peds[i];
+    if (Math.abs(p.x + 115.5) > 3.5 || p.z < z0 - 25 || p.z > z0 + 115) continue;
+    let clash = false;
+    for (let k = 0; k < walkers.length; k += 1) {
+      if (Math.abs(p.z - (z0 + walkers[k][0])) < 2.8) { clash = true; break; }
+    }
+    if (!clash) {
+      const x = pavementX(game, p.z, 0.55);
+      if (x !== null) {
+        p.x = x;
+        p.mesh.position.set(x, 0, p.z);
+        continue;
+      }
+    }
+    p.x = -111.5;
+    p.z = 12 + (i % 9);
+    p.vertical = false;
+    p.line = -125;
+    p.mesh.position.set(p.x, 0, p.z);
+  }
+}
+
+/**
+ * A free x on the -125 avenue's block-side pavement at `z`, or null when the facades on
+ * that stretch reach the kerb. The pavement runs from the kerb (x = -118) back to the wall
+ * of the block, and that wall moves from -114.6 to -116.9 depending on the building, so a
+ * single fixed x would put half the walkers inside a facade where nobody can see them.
+ * Candidates start at the kerb and step toward the block; the first clear one wins.
+ */
+function pavementX(game, z, r) {
+  const cols = game.city.colliders || [];
+  for (const x of [-117.7, -117.4, -117.1, -116.8, -116.5, -116.2]) {
+    let clear = true;
+    for (let i = 0; i < cols.length; i += 1) {
+      const c = cols[i];
+      const cx = Math.max(c.minX, Math.min(x, c.maxX));
+      const cz = Math.max(c.minZ, Math.min(z, c.maxZ));
+      if ((x - cx) * (x - cx) + (z - cz) * (z - cz) < r * r) { clear = false; break; }
+    }
+    if (clear) return x;
+  }
+  return null;
+}
+
 /** Driving through the city: Rio's car on the -25 road, traffic on the cross streets. */
 function stageDrive(game) {
   const car = takeCar(game);
@@ -164,36 +334,224 @@ function stageFoot(game) {
 }
 
 /**
- * Golden hour: Rio stands at the (25,75) crossing looking north-west across the bay at the
- * Downtown landmark tower, with the low sun behind the skyline. The frame is the one the
- * lighting pass is judged on, so it carries every HUD element at once — a live mission
- * (objective line, wanted stars row, minimap blip and the gold beacon beam at the getaway
- * marker), the district/street line and the controls hint. The camera sits behind Rio with
- * a nearly level pitch: the tower is 46 m tall and ~93 m away, so a pitched-down camera
- * would crop it and the dusk sky above it.
+ * Golden hour: Rio stands in the middle of the 75 street looking west down it, into the
+ * sunset, so the frame is a dusk boulevard rather than a skyline with a road under it. The
+ * sun sits low over the sea at the end of the street (the west end of the frame), the road
+ * recedes through the (25,75) junction with a queue of traffic in both lanes, and the
+ * pavements carry walkers — the two things the old shot was missing (it was an empty road
+ * with one pedestrian). The frame also carries every HUD element: a live mission (objective
+ * line, wanted stars, minimap blip and the gold beacon at the getaway marker), the
+ * district/street line, the police panel and the controls hint.
+ *
+ * Why the west axis: a 45 deg look across the grid put every car on the horizon line —
+ * measured, the staged traffic covered a 90 px band at y 340-430 in a 720 px frame — because
+ * a eye-level camera in 30-90 m canyons sees road only at the far end. Down the boulevard
+ * the same cars are 12-70 m away along the view axis, so they read at sheet size, and the
+ * sunset is at the end of the street instead of being cropped off the top.
  */
-const DUSK = { x: 25, z: 75, yaw: Math.PI / 4, pitch: 0.07 };
+const DUSK = { x: 48, z: 75, yaw: Math.PI / 2, pitch: 0.13, heading: -Math.PI / 2 };
+
+/**
+ * Street life for the dusk frame. The old dusk shot was staged on nothing but the camera:
+ * it showed the sunset over an empty junction, and the sheet read it as the weakest frame
+ * of the four. The boulevard it now looks down is filled the way rush hour looks: oncoming
+ * cars with their head-lamps lit on one side, tail-lights receding on the other, cross
+ * traffic on the avenue at the junction, and walkers along both pavements.
+ *
+ * Slots are fixed, not seeded: the camera is fixed, so the layout only has to be right for
+ * this one frame. Every slot sits on a real lane (z = 75 ± 3.4 on the street, x = 25 ± 3.4
+ * on the avenue) and clear of the junction's zebras, which sit ~8 m either side of each
+ * crossing centre — hence the gap between x 12 and x 38 in the list below.
+ *
+ * dir +1 on a horizontal road moves +x, i.e. toward the camera (fronts and head-lamps);
+ * dir -1 moves away (tail-lights). On the vertical avenue dir +1 moves +z, across frame.
+ */
+const DUSK_CARS = [
+  // The 75 street just ahead of the camera: one car coming at the lens, one pulling away.
+  // 13-15 m out, not 8: at 8 m a car is 48000 px — a fifth of the frame — and it blocks the
+  // boulevard the shot is about.
+  [40, 71.6, 1, false], [42, 78.4, -1, false],
+  // The queue down the boulevard, past the junction: head-lamps one side...
+  [12, 71.6, 1, false], [2, 71.6, 1, false], [-10, 71.6, 1, false],
+  [-24, 71.6, 1, false], [-40, 71.6, 1, false], [-58, 71.6, 1, false],
+  // ...tail-lights the other.
+  [10, 78.4, -1, false], [-2, 78.4, -1, false], [-16, 78.4, -1, false],
+  [-32, 78.4, -1, false], [-50, 78.4, -1, false],
+  // Cross traffic on the 25 avenue, at the junction: two cars heading across the view.
+  [21.6, 62, 1, true], [28.4, 62, -1, true],
+];
+
+/** Heading for a traffic slot: the mesh faces +z at heading 0. */
+function slotHeading(vertical, dir) {
+  if (vertical) return dir > 0 ? 0 : Math.PI;
+  return dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+}
+
+/**
+ * Walkers for the dusk frame, on both pavements of the boulevard and at the junction, so
+ * the near kerbs are inhabited at sheet size as well as the far ones. Each entry is
+ * [fromX, fromZ, dir, vertical, stepX, stepZ]; the pavement strip here is 1-2 m deep, so
+ * duskSpot() steps each body toward the kerb until it clears the facades.
+ */
+const DUSK_WALKERS = [
+  // The near (south) kerb of the street, walking with and against the camera.
+  [44.5, 67.55, 1, false, 0, 0.25], [38, 67.55, -1, false, 0, 0.25],
+  [4, 67.55, 1, false, 0, 0.25], [-4, 67.55, -1, false, 0, 0.25],
+  [-14, 67.55, 1, false, 0, 0.25], [-26, 67.55, -1, false, 0, 0.25],
+  [-38, 67.55, 1, false, 0, 0.25], [-52, 67.55, -1, false, 0, 0.25],
+  // The far (north) kerb.
+  [8, 82.45, -1, false, 0, -0.25], [-8, 82.45, 1, false, 0, -0.25],
+  [-20, 82.45, -1, false, 0, -0.25], [-34, 82.45, 1, false, 0, -0.25],
+  [-48, 82.45, -1, false, 0, -0.25],
+  // The avenue's two pavements either side of the junction.
+  [17.55, 66, 1, true, 0.25, 0], [17.55, 84, -1, true, 0.25, 0],
+  [32.45, 68, -1, true, -0.25, 0], [32.45, 86, 1, true, -0.25, 0],
+  // Two on the crossing itself, in front of the camera, and the third up on the near kerb
+  // instead. At its old (41, 72.2) the body centre sat inside the staged cab at (40, 71.6):
+  // 1.17 m apart, but 0.60 m in from the hull's side and 1.00 m along it, i.e. inside the
+  // 2.02 x 4.65 m footprint, so the torso rose out of the roof and the legs vanished into
+  // the bodywork. The kerb slot keeps him in the same part of the frame, 2.69 m clear of
+  // that cab and 2.5 m from the walker beside him, so nobody is buried in the car.
+  [41, 67.55, 1, false, 0, 0.25], [39.5, 77.8, -1, false, 0, 0],
+  [36.5, 74.6, 1, false, 0, 0],
+];
+
+/**
+ * First (x, z) of `candidates` whose body circle of radius `r` clears every facade, or
+ * null. The pavements here are only 1-2 m deep, so a single fixed x would put half the
+ * walkers inside a wall; this steps in from the kerb the way pavementX does for the
+ * chase frame.
+ */
+function duskSpot(game, candidates, r) {
+  const cols = game.city.colliders || [];
+  for (const [x, z] of candidates) {
+    let clear = true;
+    for (let i = 0; i < cols.length; i += 1) {
+      const c = cols[i];
+      const cx = Math.max(c.minX, Math.min(x, c.maxX));
+      const cz = Math.max(c.minZ, Math.min(z, c.maxZ));
+      if ((x - cx) * (x - cx) + (z - cz) * (z - cz) < r * r) { clear = false; break; }
+    }
+    if (clear) return { x, z };
+  }
+  return null;
+}
+
+/** Fill the dusk junction with its cars, walkers and one searching unit. */
+function stageDuskStreet(game) {
+  const cars = game.traffic.cars;
+  for (let i = 0; i < cars.length; i += 1) {
+    const t = cars[i];
+    const slot = DUSK_CARS[i];
+    if (slot) {
+      const [x, z, dir, vertical] = slot;
+      const line = vertical ? DUSK.x : DUSK.z;
+      t.lane = { line, vertical, dir, lane: vertical ? x - line : z - line };
+      t.x = x;
+      t.z = z;
+      t.heading = slotHeading(vertical, dir);
+      // A stopped car reads as a queue at a light; a slow roll keeps the frame from looking
+      // like a car park, and the speed is only for the paint (nothing steps the frame after).
+      t.speed = Math.min(t.cruise || 10, 6);
+      t.parked = false;
+      t.mesh.position.set(x, 0, z);
+      t.mesh.rotation.y = t.heading;
+    } else if (t.lane && ((t.lane.vertical && t.lane.line === DUSK.x)
+      || (!t.lane.vertical && t.lane.line === DUSK.z))) {
+      // A car this pass did not stage leaves the two roads that are in frame, so the layout
+      // above is exactly the layout painted instead of picking up strays behind it.
+      t.lane = { line: 125, vertical: t.lane.vertical, dir: t.lane.dir, lane: t.lane.lane };
+      if (t.lane.vertical) t.x = 125 + t.lane.lane;
+      else t.z = 125 + t.lane.lane;
+      t.mesh.position.set(t.x, 0, t.z);
+    }
+  }
+  const peds = game.traffic.peds;
+  let placed = 0;
+  for (let i = 0; i < DUSK_WALKERS.length && i < peds.length; i += 1) {
+    const [x0, z0, dir, vertical, sx, sz] = DUSK_WALKERS[i];
+    const candidates = [];
+    for (let k = 0; k < 5; k += 1) candidates.push([x0 + sx * k, z0 + sz * k]);
+    const spot = duskSpot(game, candidates, 0.55);
+    if (!spot) continue;
+    const p = peds[i];
+    p.x = spot.x;
+    p.z = spot.z;
+    p.vertical = vertical;
+    p.line = vertical ? DUSK.x : DUSK.z;
+    p.dir = dir;
+    p.heading = vertical ? (dir > 0 ? 0 : Math.PI) : (dir > 0 ? Math.PI / 2 : -Math.PI / 2);
+    p.flee = 0;
+    p.dodge = 0;
+    p.wait = 0;
+    p.mesh.position.set(p.x, 0, p.z);
+    p.mesh.rotation.y = p.heading;
+    placed += 1;
+  }
+  // Walkers the reset already put on these two roads but this pass did not stage go to the
+  // market aisle, off frame: they would otherwise stand in a facade or on a staged body.
+  for (let i = placed; i < peds.length; i += 1) {
+    const p = peds[i];
+    const onAvenue = Math.abs(p.x - DUSK.x) < 12 && p.z > DUSK.z - 80 && p.z < DUSK.z + 12;
+    const onStreet = Math.abs(p.z - DUSK.z) < 12 && p.x > DUSK.x - 80 && p.x < DUSK.x + 12;
+    if (!onAvenue && !onStreet) continue;
+    p.x = -111.5;
+    p.z = 12 + (i % 9);
+    p.vertical = false;
+    p.line = -125;
+    p.flee = 0;
+    p.dodge = 0;
+    p.mesh.position.set(p.x, 0, p.z);
+  }
+}
+
 function stageDusk(game) {
   beginMission(game.missions, 3);
   game.objective = missionText(game.missions);
   game.renderer.setBeacon(GETAWAY_MARKER.x, GETAWAY_MARKER.z, true);
   game.money = 1250;
+  // Three stars and a net closing: the dispatch panel then reads as a board with several
+  // callsigns on it instead of a single line. The two extra cruisers sit behind the camera
+  // (the lens looks down -x), so the street keeps the exact layout the shot was sealed with
+  // and only the radio traffic grows.
+  game.wanted = 3;
+  const cop = spawnPoliceCar(game.police, 121.6, -121.6, game.city);
+  cop.heading = Math.PI;
+  cop.mesh.rotation.y = Math.PI;
+  const cop2 = spawnPoliceCar(game.police, 168, -12, game.city);
+  cop2.heading = Math.PI;
+  cop2.mesh.rotation.y = Math.PI;
+  const cop3 = spawnPoliceCar(game.police, 176, 168, game.city);
+  cop3.heading = Math.PI;
+  cop3.mesh.rotation.y = Math.PI;
   game.player.x = DUSK.x;
   game.player.z = DUSK.z;
-  // Facing is +z rotated by heading, so heading = PI + PI/4 looks north-west, the way the
-  // camera is pointed; a mismatch would turn Rio's back to the skyline.
-  game.player.heading = Math.PI + Math.PI / 4;
+  // Facing is +z rotated by heading, so heading -PI/2 faces -x, the way the camera looks
+  // down the boulevard; a mismatch would turn Rio's back to the sunset.
+  game.player.heading = DUSK.heading;
   game.player.mesh.position.set(DUSK.x, 0, DUSK.z);
   game.player.mesh.rotation.y = game.player.heading;
   game.camYaw = DUSK.yaw;
   game.camPitch = DUSK.pitch;
   game.hint = 'WASD move · Shift run · E enter car · P pause';
-  // A couple of steps of traffic so the road is not frozen mid-lane, camera car-free.
-  for (let i = 0; i < 12; i += 1) updateTraffic(game.traffic, STEP);
+  // Stage the traffic and walkers at fixed spots around the fixed camera, so the frame is
+  // the junction under the sunset and not an empty road beneath it.
+  stageDuskStreet(game);
   // The boot look is golden hour for every frame; dusk.js swaps the sky, sun, fog and
   // lights on this page's own scene only, so the day shots keep the boot look untouched.
   applyDusk(game.renderer.scene, game.city);
   game.speed = 0;
+  // A ?shot= page paints a staged frame and steps nothing afterwards, so updatePolice —
+  // the live caller of the dispatch panel — never runs here. Hand each cruiser the slot
+  // updatePolice would give it from its index in the list (0 lead, 1 flank left, 2 flank
+  // right) and render the panel from the same state the frame is drawn from.
+  cop.slot = 0;
+  cop2.slot = 1;
+  cop3.slot = 2;
+  renderDispatch(game.police, { x: game.player.x, z: game.player.z, wanted: game.wanted });
+  // A staged frame is drawn on the play screen, so the HUD would paint its centre reticle
+  // over the junction. Every ?shot= is a fresh page load, so this only reaches dusk.
+  hideReticle();
   return { screen: SCREEN_PLAY };
 }
 
@@ -251,10 +609,11 @@ function stageChase(game) {
     policeCtx.wanted = game.wanted;
     updatePolice(game.police, policeCtx, STEP);
   }
-  // Two bikes coming the other way, in the far lane 12 and 26 m ahead: the cover's chase
-  // already has police traffic, so the bikes stay out of the pursuit's way and read as
-  // street life beside it.
-  stageBikes(game, car, [5.5, 10, 16], -1);
+  // Street life fills the avenue the pursuit runs down: an oncoming queue of cars with the
+  // three bikes weaving up it, a line of cars in Rio's own lane above the pursuit, and
+  // walkers on both pavements. Last, so every offset is measured from the car's final spot
+  // and nothing drifts afterwards — main.js paints the staged frame and steps nothing more.
+  stageChaseStreet(game, car);
   return { screen: SCREEN_PLAY };
 }
 

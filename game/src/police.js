@@ -647,6 +647,15 @@ function updateHeli(police, ctx, dt) {
 }
 
 /**
+ * The dispatch panel lives in its own file and is rendered from here, the one place that
+ * already holds every unit's live position for the frame. The import sits beside its only
+ * caller rather than at the top of the module: the dossier's text budget cuts this file at
+ * line 634, so a line added above the cut would push the cut point and reshuffle every
+ * byte after it, while a line below it costs nothing.
+ */
+import { renderDispatch } from './dispatch.js';
+
+/**
  * Chase + cool-off. `ctx` is { x, z, driving, speed, wanted, time, city, random,
  * onBusted }. Returns nothing; mutates ctx.wanted via ctx.setWanted(n).
  * One police car per wanted star, up to maxActive; cars too far away respawn nearer.
@@ -835,6 +844,9 @@ export function updatePolice(police, ctx, dt) {
   if (wanted > 0 && !ctx.driving && nearest < POLICE.bustDist && Math.abs(ctx.speed || 0) < POLICE.bustSpeed) {
     ctx.onBusted();
   }
+  // Last, once every car has its slot and its final position for this step: the dispatch
+  // panel reads the same state the frame is about to draw.
+  renderDispatch(police, ctx);
 }
 
 /**

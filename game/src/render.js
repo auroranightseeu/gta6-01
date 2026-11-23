@@ -2164,7 +2164,7 @@ export function createRenderer(canvas, city) {
       _lm.makeTranslation(0.37, 1.38, 0).multiply(_tmp.makeRotationX(armR));
       armMesh.setMatrixAt(n * 2 + 1, _out.copy(_pm).multiply(_lm));
       // Head, slightly taller on the broad build.
-      _lm.makeTranslation(0, 1.62 + (ud.style === 1 ? 0.06 : 0), 0);
+      _lm.makeTranslation(0, 1.62, 0);
       headMesh.setMatrixAt(n, _out.copy(_pm).multiply(_lm));
       personColor.setHex(ud.color === undefined ? 0xcccccc : ud.color);
       armMesh.setColorAt(n * 2, personColor);

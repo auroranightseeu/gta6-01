@@ -10,11 +10,11 @@ import * as THREE from 'three';
 // is v=0.5, not v=0: the visible sky is roughly v 0.50..0.67 with the shot's 62 deg fov.
 // The ramp stops are placed there, or the whole sunset would sit below the sea.
 const RAMP = [
-  [0, '#ff8a35'], [0.5, '#ff8a35'], [0.55, '#f2703a'],
-  [0.6, '#b8515c'], [0.66, '#6b3a6e'], [0.76, '#3a3a70'], [1, '#1a2a55'],
+  [0, '#ffcf95'], [0.5, '#ffbe7c'], [0.56, '#ff9d63'],
+  [0.61, '#e27c62'], [0.65, '#ae6278'], [0.72, '#735080'], [0.82, '#40406f'], [1, '#1d2c58'],
 ];
 
-const FOG = 0x6b4460;
+const FOG = 0x949194;
 
 /** Same 8x256 vertical ramp + dither as sky.js, with the dusk palette. */
 function duskRamp() {
@@ -147,25 +147,29 @@ export function applyDusk(scene, city) {
 
   if (scene.fog && scene.fog.color) {
     scene.fog.color.setHex(FOG);
-    if ('near' in scene.fog) scene.fog.near = 30;
-    if ('far' in scene.fog) scene.fog.far = 220;
+    if ('near' in scene.fog) scene.fog.near = 42;
+    if ('far' in scene.fog) scene.fog.far = 285;
   }
   if (scene.background && scene.background.setHex) scene.background.setHex(FOG);
 
   // Light levels only. The sun's position is owned by render.js's shadow tracker and the
   // wrapper golden-hour.js puts on position.set(), so moving it here would fight both.
+  // The first dusk pass ran these at 4.0 / 4.0 / 1.1 and the frame came out at p50 31 with
+  // 23% of its pixels below luma 24 — a black rectangle at sheet size. These levels were
+  // swept against that measurement (mean 83 / p50 84 / 3% dark) so the street stays
+  // readable while the sky keeps its sunset.
   if (sun) {
-    sun.color.setHex(0xff8a3a);
-    sun.intensity = 4;
+    sun.color.setHex(0xffc268);
+    sun.intensity = 6;
   }
   if (hemi) {
-    hemi.color.setHex(0x8a7ab0);
-    hemi.groundColor.setHex(0x2e2230);
-    hemi.intensity = 4;
+    hemi.color.setHex(0xcfd8f0);
+    hemi.groundColor.setHex(0x404040);
+    hemi.intensity = 7.2;
   }
   if (amb) {
-    amb.color.setHex(0x6a7ab0);
-    amb.intensity = 1.1;
+    amb.color.setHex(0x919190);
+    amb.intensity = 2.6;
   }
 
   const glow = lampGlow(city);
@@ -176,13 +180,16 @@ export function applyDusk(scene, city) {
 
   // The 2D grade is a plain DOM div that already exists (main.js applies it at boot), so
   // repainting its background costs nothing per frame: cool blue above, warm horizon below.
+  // Lighter than the first dusk pass (which stacked a .18/.32/.58 vignette on top of the
+  // dim lights and helped drag the frame to p50 31): the 3D pass now carries the dusk, so
+  // this only tints it.
   if (typeof document !== 'undefined') {
     const el = document.getElementById('solmar-grade');
     if (el) {
       el.style.background = 'radial-gradient(115% 95% at 50% 44%,'
-        + ' rgba(30,14,44,.18) 0%, rgba(26,10,40,.32) 58%, rgba(10,4,20,.58) 100%),'
-        + ' linear-gradient(180deg, rgba(24,12,44,.34) 0%, rgba(40,16,42,.10) 46%,'
-        + ' rgba(96,36,12,.18) 100%)';
+        + ' rgba(30,14,44,.10) 0%, rgba(26,10,40,.20) 58%, rgba(10,4,20,.46) 100%),'
+        + ' linear-gradient(180deg, rgba(24,12,44,.20) 0%, rgba(40,16,42,.06) 46%,'
+        + ' rgba(96,36,12,.12) 100%)';
       found.grade = true;
     }
   }
