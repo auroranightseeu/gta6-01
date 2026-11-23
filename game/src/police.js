@@ -8,7 +8,7 @@ import * as THREE from 'three';
 import { CITY, POLICE } from './config.js';
 import { resolveCircle } from './world.js';
 
-function clamp(v, lo, hi) {
+function limit(v, lo, hi) {
   return Math.max(lo, Math.min(hi, v));
 }
 
@@ -374,8 +374,8 @@ function spawnPoint(px, pz, random) {
   const angle = random() * Math.PI * 2;
   let x = px + Math.sin(angle) * POLICE.spawnDist;
   let z = pz + Math.cos(angle) * POLICE.spawnDist;
-  x = clamp(x, -CITY.bound + 6, CITY.bound - 6);
-  z = clamp(z, -CITY.bound + 6, CITY.bound - 6);
+  x = limit(x, -CITY.bound + 6, CITY.bound - 6);
+  z = limit(z, -CITY.bound + 6, CITY.bound - 6);
   if (Math.abs(x - px) > Math.abs(z - pz)) {
     let best = CITY.roadLines[0];
     for (const line of CITY.roadLines) {
@@ -406,7 +406,7 @@ function syncRoadblock(police, ctx) {
   police.roadblockLevel = level;
   if (!level) return;
   const x = CITY.roadLines.reduce((best, line) => Math.abs(line - ctx.x) < Math.abs(best - ctx.x) ? line : best, CITY.roadLines[0]);
-  const z = clamp(ctx.z + (ctx.speed >= 0 ? 34 : -34), -CITY.bound + 6, CITY.bound - 6);
+  const z = limit(ctx.z + (ctx.speed >= 0 ? 34 : -34), -CITY.bound + 6, CITY.bound - 6);
   for (const [offset, heading] of [[-2.3, Math.PI / 2], [2.3, -Math.PI / 2]]) {
     const mesh = police.renderer.makePoliceCar();
     mesh.position.set(x + offset, 0, z);
@@ -443,8 +443,8 @@ function heliTarget(h, ctx, dt) {
   // metres behind it — at 18 m/s that is 8 m, which pulled the aircraft onto the
   // car's roof and out of the top of the frame. Leading by that same amount makes
   // the station exact at any speed.
-  const ffx = clamp(h.vx / HELI.smoothH, -26, 26);
-  const ffz = clamp(h.vz / HELI.smoothH, -26, 26);
+  const ffx = limit(h.vx / HELI.smoothH, -26, 26);
+  const ffz = limit(h.vz / HELI.smoothH, -26, 26);
   // Perpendicular offset, so it drifts across the road rather than tailgating.
   return {
     x: ctx.x + fx * HELI.lead + fz * side + ffx,
@@ -612,7 +612,7 @@ function updateHeli(police, ctx, dt) {
   let dh = wantYaw - h.heading;
   while (dh > Math.PI) dh -= Math.PI * 2;
   while (dh < -Math.PI) dh += Math.PI * 2;
-  h.heading += clamp(dh, -HELI.turn * dt, HELI.turn * dt);
+  h.heading += limit(dh, -HELI.turn * dt, HELI.turn * dt);
 
   h.group.position.set(h.x, h.y, h.z);
   h.group.rotation.y = h.heading;
@@ -725,7 +725,7 @@ export function updatePolice(police, ctx, dt) {
     let dh = targetHeading - car.heading;
     while (dh > Math.PI) dh -= Math.PI * 2;
     while (dh < -Math.PI) dh += Math.PI * 2;
-    car.heading += clamp(dh, -POLICE.turn * dt, POLICE.turn * dt);
+    car.heading += limit(dh, -POLICE.turn * dt, POLICE.turn * dt);
     // Close in fast, then match Rio's pace so the chase lasts instead of ending
     // in a ram every few seconds.
     const cruise = Math.min(POLICE.cruise + POLICE.perStar * wanted, POLICE.maxSpeed);

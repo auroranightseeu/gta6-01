@@ -10,7 +10,7 @@ import { SAVE_KEY, SAVE_KEY_V1 } from './config.js';
 
 // Keys stored as null/undefined are dropped: a null side-job block must not overwrite
 // a good one from an earlier save, and JSON cannot carry undefined anyway.
-function record(state) {
+function keeper(state) {
   const out = {};
   for (const key of Object.keys(state)) {
     const value = state[key];
@@ -43,7 +43,7 @@ export function readSave() {
 
 export function writeSave(state) {
   try {
-    const next = record(state);
+    const next = keeper(state);
     // Merge over the stored record rather than replacing it, so a caller that omits a
     // key (an old call site, or a field the current run does not track) does not erase
     // it. writeSave is also called on every autosave, so this keeps v5 keys alive.

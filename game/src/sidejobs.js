@@ -32,7 +32,7 @@ const DROP_DIST = 8;
 const CLOCK_PER_M = 1 / 6.5;
 const CLOCK_SLACK = 24;
 
-function dist(ax, az, bx, bz) {
+function span(ax, az, bx, bz) {
   return Math.hypot(ax - bx, az - bz);
 }
 
@@ -57,14 +57,14 @@ function pickKerb(x, z, lo, hi, salt) {
   let bestScore = Infinity;
   for (let i = 0; i < KERBS.length; i += 1) {
     const k = KERBS[(i + salt) % KERBS.length];
-    const d = dist(x, z, k.x, k.z);
+    const d = span(x, z, k.x, k.z);
     if (d < lo || d > hi) continue;
     if (d < bestScore) { bestScore = d; best = k; }
   }
   if (!best) {
     // Fall back to the closest kerb at any distance: a fare is always offerable.
     for (const k of KERBS) {
-      const d = dist(x, z, k.x, k.z);
+      const d = span(x, z, k.x, k.z);
       if (d < bestScore) { bestScore = d; best = k; }
     }
   }
@@ -72,11 +72,11 @@ function pickKerb(x, z, lo, hi, salt) {
 }
 
 function fareFor(a, b) {
-  return Math.round(FARE_BASE + dist(a.x, a.z, b.x, b.z) * FARE_PER_M);
+  return Math.round(FARE_BASE + span(a.x, a.z, b.x, b.z) * FARE_PER_M);
 }
 
 function clockFor(a, b) {
-  return dist(a.x, a.z, b.x, b.z) * CLOCK_PER_M + CLOCK_SLACK;
+  return span(a.x, a.z, b.x, b.z) * CLOCK_PER_M + CLOCK_SLACK;
 }
 
 /** A slim amber post with a pin: visible from across a block, two draws. */
@@ -227,7 +227,7 @@ export function updateSidejobs(s, ctx, dt) {
 
   if (t.phase === 'wait') {
     // The passenger only boards a car: driving up on foot does nothing.
-    if (c.driving && dist(c.x, c.z, t.pickup.x, t.pickup.z) < BOARD_DIST) {
+    if (c.driving && span(c.x, c.z, t.pickup.x, t.pickup.z) < BOARD_DIST) {
       t.phase = 'drop';
       t.boarded = true;
       t.t = 0;
@@ -238,14 +238,14 @@ export function updateSidejobs(s, ctx, dt) {
         s.dropMarker.position.set(t.drop.x, 0, t.drop.z);
         s.dropMarker.visible = true;
       }
-      if (typeof c.onMsg === 'function') c.onMsg(`Passenger aboard. Drop-off ${Math.round(dist(t.drop.x, t.drop.z, c.x, c.z))} m away — $${t.fare}.`);
+      if (typeof c.onMsg === 'function') c.onMsg(`Passenger aboard. Drop-off ${Math.round(span(t.drop.x, t.drop.z, c.x, c.z))} m away — $${t.fare}.`);
     }
     return;
   }
 
   if (t.phase === 'drop') {
     t.timeLeft -= step;
-    if (dist(c.x, c.z, t.drop.x, t.drop.z) < DROP_DIST) {
+    if (span(c.x, c.z, t.drop.x, t.drop.z) < DROP_DIST) {
       arrive(s, c);
       return;
     }
