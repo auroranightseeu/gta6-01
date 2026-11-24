@@ -86,8 +86,13 @@ export function updatePlayer(p, dt, wish, run, camYaw, city) {
   // the legs and, faintly, the arms. A recoil kick lifts the right arm for a beat: armRx
   // more negative pitches the muzzle UP (rotation.x -1.45 is level, -1.87 is up 17°),
   // so the kick is subtracted — adding it pitched the barrel at the ground.
-  const armed = p.armed ? 1 : 0;
-  p.aim += (armed - p.aim) * Math.min(1, dt * 9);
+  // The raised two-handed grip belongs to firing, not to carrying: `p.armed` only says
+  // which gun is in his hand, so keying the pose off it left the pistol up and pointing
+  // down the street while Rio just stood there. A shot sets `aimHold` (0.9 s) and
+  // `recoil` (~0.14 s), so the arms come up on the trigger and drop back to his side
+  // once the shot is over. Driving clears `armed`, which keeps the hands down as before.
+  const aiming = p.armed && ((p.aimHold || 0) > 0 || (p.recoil || 0) > 0) ? 1 : 0;
+  p.aim += (aiming - p.aim) * Math.min(1, dt * 9);
   const aim = p.aim;
   const kick = (p.recoil || 0) * 1.9;
   const u = p.mesh.userData;
